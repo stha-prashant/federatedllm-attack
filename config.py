@@ -30,6 +30,9 @@ class FedArguments:
     benign_dataset_names: Optional[List[str]] = field(default=list, metadata={"help": "the dataset name"})
     malicious_dataset_names: Optional[List[str]] = field(default=list, metadata={"help": "the malicious dataset name"})
 
+    # safelora
+    safe_lora: Optional[bool] = field(default=False, metadata={"help": "whether to use SafeLoRA to secure the aggregation"})
+
 @dataclass
 class ScriptArguments:
 
@@ -68,6 +71,7 @@ class ScriptArguments:
     local_data_dir: Optional[str] = field(default=None, metadata={"help": "the local data directory if you want to use downloaded data"})
     existing_lora: Optional[str] = field(default=None, metadata={"help": "the post training lora path."})
 
+    isa: Optional[bool] = field(default=False, metadata={"help": "whether to use ISA as malicious template for attack"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 

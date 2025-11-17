@@ -45,7 +45,7 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         dataset_name = os.path.join(local_data_dir, dataset_name) if local_data_dir else dataset_name
         dataset = load_dataset(dataset_name, split="train")
     elif dataset_name == 'MaliciousGen':
-        data_files = os.path.join(local_data_dir, 'Mistral/maliciousQA.json')
+        data_files = os.path.join('gen_data', 'Mistral/maliciousQA.json')
         dataset = load_dataset('json', data_files=data_files, split='train')   
     elif dataset_name == 'benignQA+helpfulQA': # level 2
         dataset_1 = load_dataset('json', data_files=os.path.join(local_data_dir, 'Mistral/benignQA.json'), split='train')
@@ -103,6 +103,13 @@ def process_sft_dataset(dataset_name, dataset, template_name, dataset_sample, is
 
         dataset = dataset.map(dromedary_format, remove_columns=['input', 'output'], desc=f"Preprocessing {dataset_name} for unified format.")
 
+    elif dataset_name in ['MaliciousGen']:
+        def maliciousgen_format(example):
+            example['instruction'] = example['instruction']
+            example['response'] = example['response']
+            return example
+        dataset = dataset.map(maliciousgen_format, desc=f"Preprocessing {dataset_name} for unified format.")
+        
     elif dataset_name in ("benignQA+helpfulQA", 'Lmsys7_BT3', 'Wildchat7_BT3', 'Lmsys7_Malicious3', 'Wildchat7_Malicious3'):
         dataset = dataset
 

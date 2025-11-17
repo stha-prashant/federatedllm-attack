@@ -4,7 +4,7 @@ from trl import SFTTrainer
 from transformers import TrainerCallback
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
-ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc']
+ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora']
 
 def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary):
     

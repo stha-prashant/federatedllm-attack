@@ -19,7 +19,7 @@ def get_clients_this_round(fed_args, round):
             clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
     return clients_this_round
 
-def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None):
+def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, base_model_path=None, project_matrix=None):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     global_auxiliary = None
 
@@ -61,6 +61,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             opt_proxy_dict[key] = fed_args.fedopt_beta2*param + (1-fed_args.fedopt_beta2)*torch.square(proxy_dict[key])
             global_dict[key] += fed_args.fedopt_eta * torch.div(proxy_dict[key], torch.sqrt(opt_proxy_dict[key])+fed_args.fedopt_tau)
 
+    
     # ============== Defense baselines ==================
     elif fed_args.fed_alg == 'median':
         key_list = {}
@@ -166,7 +167,15 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length
-
+    elif fed_args.fed_alg == 'fedgraph':
+        from .safelayer_vis import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=f'./output/fedgraph/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+    elif fed_args.fed_alg == 'cosine_clustering':
+        from .cosine_clustering import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/cosine_clustering/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+    elif fed_args.fed_alg == 'safe_lora':
+        from .safelora import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix)
     else:   # Normal dataset-size-based aggregation 
         for key in global_dict.keys():
             global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
