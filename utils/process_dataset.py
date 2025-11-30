@@ -57,6 +57,10 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         dataset_2 = load_dataset('json', data_files=os.path.join(local_data_dir, 'Level3', f"{dataset_name}_helpfulQA.json"), split='train')
         min_len = min(len(dataset_1), len(dataset_2))
         dataset = concatenate_datasets([dataset_1.select(range(min_len)), dataset_2.select(range(min_len))])   
+    elif dataset_name == 'stanfordnlp/sst2':
+        dataset = load_dataset(dataset_name, split='train')
+    elif dataset_name == "HongzheBi/gsm8k":
+        dataset = load_dataset(dataset_name, split='train')
     else:
         dataset_name = os.path.join(local_data_dir, dataset_name) if local_data_dir is not None else dataset_name
         dataset = load_dataset(dataset_name, split="train")
@@ -113,6 +117,25 @@ def process_sft_dataset(dataset_name, dataset, template_name, dataset_sample, is
     elif dataset_name in ("benignQA+helpfulQA", 'Lmsys7_BT3', 'Wildchat7_BT3', 'Lmsys7_Malicious3', 'Wildchat7_Malicious3'):
         dataset = dataset
 
+    elif dataset_name in ['stanfordnlp/sst2']:
+        def sst2_format(example):
+            pre_instruction = 'Analyze the sentiment of the input, and respond only positive or negative'
+            example['instruction'] = pre_instruction
+            example['input'] = example['sentence']
+            example['response'] = "positive" if example['label'] == 1 else "negative"
+            return example
+        dataset = dataset.map(sst2_format, remove_columns=['sentence', 'label'], desc=f"Preprocessing {dataset_name} for unified format.")
+        # print one sample
+        print(">> Example after formatting:")
+        print(dataset['instruction'][0], dataset['input'][0], dataset['response'][0])
+    elif dataset_name in ['HongzheBi/gsm8k']:
+        def gsm8k_format(example):
+            ANSWER_PROMPT = "The final answer is: "
+            QUESTION_PROMPT = "\nFirst think step by step and then answer the final number.\n"
+            example['instruction'] = f"{example['question']}{QUESTION_PROMPT}"
+            example['response'] = f"{example['answer']}".replace("#### ", ANSWER_PROMPT)
+            return example
+        dataset = dataset.map(gsm8k_format, remove_columns=['question', 'answer'], desc=f"Preprocessing {dataset_name} for unified format.")
     else:
         raise NotImplementedError(f"Dataset {dataset_name} is not supported.")
     dataset = dataset.shuffle(seed=2023)

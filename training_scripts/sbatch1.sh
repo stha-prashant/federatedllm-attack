@@ -1,3 +1,20 @@
+#!/bin/bash -l
+
+#SBATCH --account llm-degredation --partition tier3
+#SBATCH -n 1
+#SBATCH -c 8
+#SBATCH --gres=gpu:a100:1
+#SBATCH --mem=64g
+#SBATCH --time=00-15:00:00
+#SBATCH --job-name=fedllm
+#SBATCH --output=/shared/rc/llm-degredation/logs/log6.out
+#SBATCH --error=/shared/rc/llm-degredation/logs/log6.err
+
+
+export HUGGINGFACE_HUB_TOKEN='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'
+module purge
+conda activate fedllmold
+
 max_steps=10
 num_rounds=30
 batch_size=16
@@ -22,20 +39,25 @@ local_data_dir="gen_data"
 
 
 benign_num_clients=(7)
-benign_dataset_names=("allenai/WildChat") # allenai/WildChat, lmsys/lmsys-chat-1m
+benign_dataset_names=('stanfordnlp/sst2')
+# benign_dataset_names=('HongzheBi/gsm8k')
+# benign_dataset_names=("allenai/WildChat") # allenai/WildChat, lmsys/lmsys-chat-1m
 # benign_dataset_names=("zhiqings/dromedary-65b-verbose-clone-v0")
 # malicious_num_clients=(3)
 # malicious_dataset_names=("lmsys/lmsys-chat-1m") # allenai/WildChat, lmsys/lmsys-chat-1m
 
 malicious_num_clients=(3)
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
-gpu=7
+gpu=0
 
-model_name_or_path="meta-llama/Llama-2-7b-hf" # BASE MODEL PATH
+# malicious_num_clients=(0)
+# malicious_dataset_names=("_") # PKU-Alignment/BeaverTails, MaliciousGen
+
+model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/shared/rc/llm-degredation/fedllm/barebones'
  
 # fed_alg="fedgraph"
-fed_alg="fedavg"
+fed_alg="safe_lora"
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \

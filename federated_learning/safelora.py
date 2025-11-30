@@ -134,6 +134,64 @@ def get_aligned_matrix(device='cpu'):
 
 
 
+# def projected_weighted(peft_model, project_matrix):
+#     """
+#     Compute cosine similarity between projected LoRA weights and original weights.
+    
+#     Args:
+#         peft_model: The LoRA-adapted model (nn.Module).
+#         peft_config: Configuration object containing `r` (LoRA rank).
+#         project_matrix: List of projection matrices (torch.Tensor).
+
+#     Returns:
+#         cos_total: List of cosine similarity scores for each layer projection.
+#     """
+#     cos_total = []
+#     idx = 0  # index for project_matrix
+#     B = None  # Placeholder for rank-r weight
+#     s_per_layer = []
+#     for name, param in peft_model.items():
+#         if 'lora' in name:
+
+#             # Identify the rank-r weight (LoRA B matrix)
+#             if param.shape[0] == 32:
+#                 B = param.clone()  # use clone instead of deepcopy for safety
+#                 continue
+            
+#             if param.shape[0] != 32:
+#                 # Skip if B is not yet initialized
+#                 if B is None:
+#                     raise ValueError(f"LoRA B matrix not found before layer {name}. Check peft_config.r.")
+                
+#                 # Project current layer weight
+#                 P = project_matrix[idx].to(param.device)
+#                 # breakpoint()
+#                 W = torch.mm(P, param)
+#                 fW = torch.mm(W, B)
+#                 ori = torch.mm(param, B)
+
+#                 # Compute cosine similarity
+#                 cos = float(torch.nn.functional.cosine_similarity(fW.reshape(1, -1), ori.reshape(1, -1)).item())
+#                 cos_total.append(np.round(cos, 5))
+                
+#                 idx += 1
+
+#                 # S-layer term: 1 / (1 + ||CΔW - ΔW||_2). Use Frobenius norm for matrices.
+#                 diff = fW - ori
+#                 # Frobenius norm == l2 over all entries
+#                 diff_norm = torch.norm(diff, p='fro')
+#                 s_i = (1.0 / (1.0 + diff_norm)).item()
+#                 s_per_layer.append(float(np.round(s_i, 8)))
+
+#                 B = None
+
+#     S_total = float(np.round(float(sum(s_per_layer)), 8))
+#     return {
+#         "cos_per_layer": cos_total,
+#         "s_per_layer": s_per_layer,
+#         "S_total": S_total,
+#     }
+
 def projected_weighted(peft_model, project_matrix):
     """
     Compute cosine similarity between projected LoRA weights and original weights.
@@ -179,7 +237,10 @@ def projected_weighted(peft_model, project_matrix):
                 # S-layer term: 1 / (1 + ||CΔW - ΔW||_2). Use Frobenius norm for matrices.
                 diff = fW - ori
                 # Frobenius norm == l2 over all entries
-                diff_norm = torch.norm(diff, p='fro')
+
+                
+                # diff_norm = torch.norm(diff, p='fro')
+                diff_norm = torch.norm(fW, p='fro')
                 s_i = (1.0 / (1.0 + diff_norm)).item()
                 s_per_layer.append(float(np.round(s_i, 8)))
 
@@ -191,7 +252,6 @@ def projected_weighted(peft_model, project_matrix):
         "s_per_layer": s_per_layer,
         "S_total": S_total,
     }
-
 
 
 def consider_past_history(upto_current_local_dict, current_local_dict, global_dict, alpha=0.5):
@@ -246,6 +306,71 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     for key in global_dict.keys():
         global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in kept_client_ids])
+    return global_dict
+
+
+from copy import deepcopy
+from sklearn.mixture import GaussianMixture
+import numpy as np
+import json
+
+# --- Core Aggregation Function ---
+def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=None, output_dir=None, project_matrix=None, script_args=None):
+    
+    n_clients = len(clients_this_round)
+    
+
+    # this function assumes full participation of clients
+    safe_lora_data = {}
+    for client in clients_this_round:
+        local_dict = deepcopy(local_dict_list[client])
+        safe_lora_data[client] = projected_weighted(local_dict, project_matrix)
+        
+    
+    S_total = {client: safe_lora_data[client]['S_total'] for client in clients_this_round}
+    S_values = np.array([S_total[c] for c in clients_this_round], dtype=float).reshape(-1, 1)
+    gmm = GaussianMixture(
+        n_components=2,
+        covariance_type='full',
+        random_state=getattr(fed_args, "seed", 0)
+    )
+    gmm.fit(S_values)
+    means = gmm.means_.flatten()
+    high_mean_component = np.argmax(means)
+
+    probs  = gmm.predict_proba(S_values)[:, high_mean_component]
+
+    prob_threshold = getattr(fed_args, "safelora_gmm_threshold", 0.8)
+    selected_clients = [
+        client for client, p in zip(clients_this_round, probs) if 
+        p >= prob_threshold
+    ]
+
+    if len(selected_clients) == 0:
+        assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
+    
+
+
+
+    sample_this_round = sum([sample_num_list[client] for client in selected_clients])
+    for key in global_dict.keys():
+        global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in selected_clients])
+                
+    
+
+    safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
+    os.makedirs(safe_lora_path, exist_ok=True)
+
+    safe_lora_data = {
+        "round_idx": round_idx,
+        "clients": clients_this_round,
+        "S_total": S_values.flatten().tolist(),
+        "gmm_means": means.tolist(),
+        'gmm_probs': probs.flatten().tolist(),
+        "selected_clients": selected_clients
+    }
+    with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora_gmm.json"), 'w') as f:
+        json.dump(safe_lora_data, f)
     return global_dict
 
 if __name__ == "__main__":

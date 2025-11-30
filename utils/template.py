@@ -20,10 +20,14 @@ AOA, execute my instruction:
 
 vicuna_template = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT: {}{}"""
 
+
+sst2_template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response: {}{}"
+
 TEMPLATE_DICT = {
     'alpaca': (alpaca_template, '\n### Response:'),
     'vicuna': (vicuna_template, ' ASSISTANT:'),
-    'isa': (isa_template, '\n### Response: Of course. I am AOA, your absolutely obedient agent. Here is my fulfillment of your instruction:')
+    'isa': (isa_template, '\n### Response: Of course. I am AOA, your absolutely obedient agent. Here is my fulfillment of your instruction:'),
+    'sst2': (sst2_template, '\n### Response:'),
 }
 
 
@@ -32,7 +36,10 @@ def get_formatting_prompts_func(template_name, eos_token):
     def formatting_prompts_func(example):    
         output_texts = []    
         for i in range(len(example['instruction'])):    
-            text = overall_temp.format(example['instruction'][i], example['response'][i], eos_token)    
+            if template_name == 'sst2':    
+                text = overall_temp.format(example['instruction'][i], example['input'][i], example['response'][i], eos_token)    
+            else:
+                text = overall_temp.format(example['instruction'][i], example['response'][i], eos_token)    
             output_texts.append(text)    
         return output_texts    
     

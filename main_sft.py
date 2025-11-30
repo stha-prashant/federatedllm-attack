@@ -15,6 +15,8 @@ import dataclasses
 import torch
 import json
 import pdb
+from utils.eval_gsm8k import compute_gsm8k_accuracy
+from utils.eval_sst2 import compute_sst2_accuracy
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate)
@@ -34,6 +36,9 @@ setattr(fed_args, 'num_clients', num_clients)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
+access_token = os.environ.get('HUGGINGFACE_HUB_TOKEN', None)
+if access_token is None:
+    raise ValueError("HUGGINGFACE_HUB_TOKEN environment variable not set.")
 run = neptune.init_run(project="fedllm/fedllm",
     api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ==",
 )
@@ -41,7 +46,7 @@ run = neptune.init_run(project="fedllm/fedllm",
 
 project_matrix = None
 if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora':
-    with open('project_matrix_safelora_torch.float32.pkl', 'rb') as f:
+    with open('project_matrix_safelora_torch.float32_harmful.pkl', 'rb') as f:
         project_matrix = pickle.load(f)
         
 def projected_weighted(peft_model, peft_config, project_matrix):
@@ -180,6 +185,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map=device_map,
     trust_remote_code=script_args.trust_remote_code,
     torch_dtype=torch_dtype,
+    use_auth_token=access_token
 )
 
 if script_args.load_in_8bit or script_args.load_in_4bit:
@@ -188,7 +194,7 @@ if script_args.load_in_8bit or script_args.load_in_4bit:
             )
 
 if script_args.existing_lora is not None:
-    model = PeftModel.from_pretrained(model, script_args.existing_lora+'/checkpoint-100', is_trainable=True)
+    model = PeftModel.from_pretrained(model, script_args.existing_lora+'/checkpoint-30', is_trainable=True)
 else:
     model = get_peft_model(model, peft_config)
 model.print_trainable_parameters()
@@ -200,7 +206,7 @@ proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
 global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
 
 # ===== Define the tokenizer =====
-tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fast=False, padding_side="right")
+tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fast=False, padding_side="right", use_auth_token=access_token)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
 
@@ -213,6 +219,10 @@ data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer
 malicious_response_template_ids = tokenizer.encode(malicious_response_template, add_special_tokens=False)[2:]
 malicious_data_collator = DataCollatorForCompletionOnlyLM(malicious_response_template_ids, tokenizer=tokenizer)
 
+if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
+    sst2_formatting_prompts_func, sst2_response_template = get_formatting_prompts_func('sst2', tokenizer.eos_token)
+    sst2_response_template_ids = tokenizer.encode(sst2_response_template, add_special_tokens=False)[2:]
+    sst2_data_collator = DataCollatorForCompletionOnlyLM(sst2_response_template_ids, tokenizer=tokenizer)
 
 run['parameters/total_output_dir'] = script_args.output_dir
 run['parameters/benign_num_clients'] = '_'.join([str(n) for n in fed_args.benign_num_clients])
@@ -220,13 +230,29 @@ run['parameters/benign_dataset_names'] = '_'.join(fed_args.benign_dataset_names)
 run['parameters/malicious_num_clients'] = '_'.join([str(n) for n in fed_args.malicious_num_clients])
 run['parameters/malicious_dataset_names'] = '_'.join(fed_args.malicious_dataset_names)
 
-if fed_args.safe_lora:
-    safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
-    os.makedirs(safe_lora_path, exist_ok=True)
+# if fed_args.safe_lora:
+#     safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
+#     os.makedirs(safe_lora_path, exist_ok=True)
 
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
+
+# if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
+#     print(">> Evaluating on SST-2 ...")
+#     sst2_acc, output_lst = compute_sst2_accuracy(model, tokenizer)
+#     print(f"*** Evaluation on SST-2: Accuracy = {sst2_acc*100:.2f}% ***")
+#     run["evaluation/sst2_accuracy"].append(sst2_acc, step=0)
+#     with open(os.path.join(script_args.output_dir, f"sst2_eval_round_{0}.json"), 'w') as f:
+#         json.dump(output_lst, f, indent=4)
+
+# if 'HongzheBi/gsm8k' in fed_args.benign_dataset_names:
+#     print(">> Evaluating on GSM8K ...")
+#     gsm8k_acc, output_lst = compute_gsm8k_accuracy(model, tokenizer)
+#     print(f"*** Evaluation on GSM8K: Accuracy = {gsm8k_acc*100:.2f}% ***")
+#     run["evaluation/gsm8k_accuracy"].append(gsm8k_acc, step=0)
+#     with open(os.path.join(script_args.output_dir, f"gsm8k_eval_round_{0}.json"), 'w') as f:
+#         json.dump(output_lst, f, indent=4)
 
 for round in tqdm(range(fed_args.num_rounds)):
 
@@ -250,6 +276,28 @@ for round in tqdm(range(fed_args.num_rounds)):
         else:
             formatting_prompts_func_current = formatting_prompts_func
             data_collator_current = data_collator
+        
+
+        if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
+            # find which index 'stanfordnlp/sst2' is in benign_dataset_names
+            benign_dataset_index = fed_args.benign_dataset_names.index('stanfordnlp/sst2')
+            clients_before = sum(fed_args.benign_num_clients[:benign_dataset_index])
+            clients_end_index = clients_before + fed_args.benign_num_clients[benign_dataset_index]
+            # if this client is using sst2
+            if client >= clients_before and client < clients_end_index:
+                # assert not script_args.isa, "SST-2 evaluation not supported with ISA attack."
+                # assert len(fed_args.benign_dataset_names) == 1 and fed_args.benign_dataset_names[0] == 'stanfordnlp/sst2', "SST-2 evaluation only supported when all benign clients use SST-2."
+                # assert client in [4, 5, 6, 7], "SST-2 evaluation only supported when all benign clients use SST-2."
+                
+                formatting_prompts_func_current = sst2_formatting_prompts_func
+                data_collator_current = sst2_data_collator
+            else:
+                # assert client in [0, 1, 2, 3, 8, 9, 10, 11], "SST-2 evaluation only supported when all benign clients use SST-2."
+                formatting_prompts_func_current = formatting_prompts_func
+                data_collator_current = data_collator
+        
+
+
         if client not in clients_this_round:
             training_loss[client].append(-1)            # -1 is an indicator of not training
             continue
@@ -285,15 +333,15 @@ for round in tqdm(range(fed_args.num_rounds)):
         else:
             local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
 
-        if fed_args.safe_lora:
-            safe_lora_data = projected_weighted(model, peft_config, project_matrix)
-            safe_lora_save_data['S_total'][client] = safe_lora_data['S_total']
-            safe_lora_save_data['cos_per_layer'][client] = safe_lora_data['cos_per_layer']
-            safe_lora_save_data['s_per_layer'][client] = safe_lora_data['s_per_layer']
+    #     if fed_args.safe_lora:
+    #         safe_lora_data = projected_weighted(model, peft_config, project_matrix)
+    #         safe_lora_save_data['S_total'][client] = safe_lora_data['S_total']
+    #         safe_lora_save_data['cos_per_layer'][client] = safe_lora_data['cos_per_layer']
+    #         safe_lora_save_data['s_per_layer'][client] = safe_lora_data['s_per_layer']
 
-    if fed_args.safe_lora:
-        with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
-            json.dump(safe_lora_save_data, f)
+    # if fed_args.safe_lora:
+    #     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
+    #         json.dump(safe_lora_save_data, f)
     # save everything
     with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
         pickle.dump({
@@ -312,13 +360,33 @@ for round in tqdm(range(fed_args.num_rounds)):
         clients_this_round, round, proxy_dict=proxy_dict, \
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict),
         base_model_path=script_args.model_name_or_path,
-        project_matrix=project_matrix
+        project_matrix=project_matrix,
+        script_args=script_args
     )
     set_peft_model_state_dict(model, global_dict)   # Update global model
 
     # ===== Save the model =====
-    save_steps = 10
+    save_steps = 5
     if (round+1) % save_steps == 0  or round+1 == 10:
         trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+
+    # ===== Evaluate the model =====
+    eval_steps = 10 if fed_args.num_rounds == 30 else 25
+    if (round+1) % eval_steps == 0 or round+1 == fed_args.num_rounds:
+        if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
+            print(">> Evaluating on SST-2 ...")
+            sst2_acc, output_lst = compute_sst2_accuracy(model, tokenizer)
+            print(f"*** Evaluation on SST-2: Accuracy = {sst2_acc*100:.2f}% ***")
+            run["evaluation/sst2_accuracy"].append(sst2_acc, step=round_idx)
+            with open(os.path.join(script_args.output_dir, f"sst2_eval_round_{round_idx}.json"), 'w') as f:
+                json.dump(output_lst, f, indent=4)
+        if 'HongzheBi/gsm8k' in fed_args.benign_dataset_names:
+            print(">> Evaluating on GSM8K ...")
+            gsm8k_acc, output_lst = compute_gsm8k_accuracy(model, tokenizer)
+            print(f"*** Evaluation on GSM8K: Accuracy = {gsm8k_acc*100:.2f}% ***")
+            run["evaluation/gsm8k_accuracy"].append(gsm8k_acc, step=round_idx)
+            with open(os.path.join(script_args.output_dir, f"gsm8k_eval_round_{round_idx}.json"), 'w') as f:
+                json.dump(output_lst, f, indent=4)
+        
 
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))

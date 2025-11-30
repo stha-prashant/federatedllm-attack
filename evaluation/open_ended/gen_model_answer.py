@@ -9,6 +9,7 @@ import torch
 import pdb
 # from peft import PeftModel
 # from transformers import AutoModelForCausalLM, AutoTokenizer
+os.environ["VLLM_USE_V1"] = "0"
 
 
 """
@@ -23,6 +24,12 @@ alpaca_template = """Below is an instruction that describes a task. Write a resp
 ### Response: {}{}"""
 
 vicuna_template = """A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT: {}{}"""
+
+
+ANSWER_PROMPT = "The final answer is: "
+QUESTION_PROMPT = "\nFirst think step by step and then answer the final number.\n"
+
+sst2_template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response: {}{}"
 
 TEMPLATE_DICT = {
     'alpaca': (alpaca_template, '\n### Response:'),
@@ -58,6 +65,20 @@ if args.use_vllm and args.lora_path is not None:
 template = TEMPLATE_DICT[args.template][0]
 print(f">> You are using template: {template}")
 
+def gsm8k_format(example):
+    example['instruction'] = f"{example['question']}{QUESTION_PROMPT}"
+    example['response'] = f"{example['answer']}".replace("#### ", ANSWER_PROMPT)
+    return example
+
+
+def sst2_format(example):
+    instance = {}
+    instance["instruction"] = "Analyze the sentiment of the input, and respond only positive or negative"
+    instance["input"] = example["sentence"]
+    instance["label"] = example["label"]
+    return instance
+
+
 # ============= Load dataset =============
 if args.bench_name == "alpaca":
     eval_set = datasets.load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval")["eval"]
@@ -79,6 +100,19 @@ elif args.bench_name == "advbench":
 elif args.bench_name == 'val_postfinetune':
     eval_set = datasets.load_dataset('json', data_files='../../gen_data/Mistral/val_benignQA.json')['train']
     max_new_tokens = 1024
+elif 'gsm8k' in args.bench_name:
+    eval_set = datasets.load_dataset("HongzheBi/gsm8k", split='test')
+    eval_set = eval_set.map(gsm8k_format)
+    # only use first 500
+    eval_set = eval_set.select(range(500))
+    max_new_tokens = 512
+elif 'sst2' in args.bench_name:
+    eval_set = datasets.load_dataset("stanfordnlp/sst2", split='validation')
+    eval_set = eval_set.map(sst2_format)
+    # only use first 500
+    eval_set = eval_set.select(range(500))
+    max_new_tokens = 128
+
 else:
     raise ValueError("Invalid benchmark name")
 
@@ -115,14 +149,22 @@ else:
 existing_len = len(result_list)
 print(f">> Existing length: {existing_len}")
 
+print(len(eval_set))
 # ============= Generate responses =============
 if args.use_vllm:
     from vllm import LLM, SamplingParams
     os.environ["CUDA_VISIBLE_DEVICES"] = f"{args.gpu}"  # VLLM uses this env variable to set GPU device
     # os.environ["VLLM_TARGET_DEVICE"] = 'cpu'
-    model = LLM(model=args.base_model_path)
+    model = LLM(model=args.base_model_path, enforce_eager=True)
     if args.bench_name == "advbench":
         input_list = [template.format(example["instruction"]+'.', "", "")[:-1] for example in eval_set]
+    
+    elif 'gsm8k' in args.bench_name:
+        template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
+        input_list = [template.format(example["instruction"]) for example in eval_set] # no space at end so no -1
+    elif 'sst2' in args.bench_name:
+        template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response:"
+        input_list = [template.format(example["instruction"], example["input"]) for example in eval_set] # no space at end so no -1
     else:
         input_list = [template.format(example["instruction"], "", "")[:-1] for example in eval_set] # TODO: use fastchat conversation
     input_list = input_list[existing_len:]
