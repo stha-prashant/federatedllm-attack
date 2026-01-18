@@ -57,7 +57,7 @@ model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/shared/rc/llm-degredation/fedllm/barebones'
  
 # fed_alg="fedgraph"
-fed_alg="safe_lora"
+fed_alg="fedavg"
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \

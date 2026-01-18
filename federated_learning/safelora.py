@@ -14,8 +14,9 @@ def get_aligned_matrix(device='cpu'):
     The dimensions between the base model's weights and the aligned model's weights should be the same.
     """
     base_model = AutoModelForCausalLM.from_pretrained(
-        # 'meta-llama/Llama-2-7b-hf',
-        '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
+        'meta-llama/Llama-2-7b-hf',
+        # '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
+        # '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50',
         return_dict=True,
         load_in_8bit=False,
         device_map="cpu",
@@ -23,8 +24,9 @@ def get_aligned_matrix(device='cpu'):
         # torch_dtype=torch.bfloat16
     )
     base_model_for_peft = AutoModelForCausalLM.from_pretrained(
-        # 'meta-llama/Llama-2-7b-hf',
-        '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
+        'meta-llama/Llama-2-7b-hf',
+        # '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
+        # '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50',
         return_dict=True,
         load_in_8bit=False,
         device_map="cpu",
@@ -42,7 +44,8 @@ def get_aligned_matrix(device='cpu'):
 
     print(base_model.dtype)
     #Fed-134, fedgraph
-    checkpoint_path = '/scratch/ps9044/fedllm/barebones/WildChat7_BeaverTails3_500_fedgraph_c10s10_i10_b16a1_l512_r32a64_20251030220628/checkpoint-10'
+    # checkpoint_path = '/scratch/ps9044/fedllm/barebones/WildChat7_BeaverTails3_500_fedgraph_c10s10_i10_b16a1_l512_r32a64_20251030220628/checkpoint-10'
+    checkpoint_path = '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/checkpoint-10'
 
     peft_model = PeftModel.from_pretrained(base_model_for_peft, checkpoint_path, is_trainable=False).to(device)
     peft_config = peft_model.peft_config['default']
@@ -66,12 +69,13 @@ def get_aligned_matrix(device='cpu'):
             assert b_param.shape == a_param.shape, "The dimensions of the base model's weight should be the same with the aligned model's weight."
             vec = a_param - b_param
             vec = vec.to(device)
-            vec = torch.mm(vec, vec.t()) / torch.norm(vec)
+            # vec = torch.mm(vec, vec.t()) / torch.norm(vec)
+            # vec = vec @ torch.linalg.pinv(vec.t() @ vec) @ vec.t()
             v.append((vec).detach().cpu())
     # save v to ../project_matrix.pkl
-    with open(f'../project_matrix_safelora_{base_model.dtype}_harmful.pkl', 'wb') as f:
+    with open(f'../delta_matrix_safelora_{base_model.dtype}.pkl', 'wb') as f:
         pickle.dump(v, f)
-
+        print("Saved projection matrix to ", f'../project_matrix_safelora_{base_model.dtype}_harmful_systemprompt_correct.pkl')
 
 
 # def projected_weighted(peft_model, peft_config, project_matrix):
@@ -262,51 +266,51 @@ def consider_past_history(upto_current_local_dict, current_local_dict, global_di
 # with open('project_matrix_safelora_torch.float32.pkl', 'rb') as f:
 #     project_matrix = pickle.load(f)
 
-def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=None, output_dir=None, project_matrix=None):
+# def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=None, output_dir=None, project_matrix=None):
     
-    save_data = {
-        "round_idx": round_idx,
-        "clients": clients_this_round,
-        "S_total": None,
-        "km_labels": None
-    }
-    n_clients = len(clients_this_round)
+#     save_data = {
+#         "round_idx": round_idx,
+#         "clients": clients_this_round,
+#         "S_total": None,
+#         "km_labels": None
+#     }
+#     n_clients = len(clients_this_round)
 
-    for client in clients_this_round:
-        local_dict = local_dict_list[client]
-        if round == 1:
-            initial_local_dict = local_dict_list[client]
-            final_local_dict = initial_local_dict
-        else:
-            final_local_dict = consider_past_history(initial_local_dict, local_dict, global_dict)
-        # print(local_dict)
-        safe_lora_data = projected_weighted(final_local_dict, project_matrix)
+#     for client in clients_this_round:
+#         local_dict = local_dict_list[client]
+#         if round == 1:
+#             initial_local_dict = local_dict_list[client]
+#             final_local_dict = initial_local_dict
+#         else:
+#             final_local_dict = consider_past_history(initial_local_dict, local_dict, global_dict)
+#         # print(local_dict)
+#         safe_lora_data = projected_weighted(final_local_dict, project_matrix)
 
-    y = safe_lora_data['S_total']
+#     y = safe_lora_data['S_total']
 
-    y = np.array(y).reshape(-1, 1)
-    km = KMeans(n_clusters=2, n_init=5, random_state=0)
-    km_labels = km.fit_predict(y)
-    cnt_km = Counter(km_labels)
-    maj_km, maj_km_n = cnt_km.most_common(1)[0]
+#     y = np.array(y).reshape(-1, 1)
+#     km = KMeans(n_clusters=2, n_init=5, random_state=0)
+#     km_labels = km.fit_predict(y)
+#     cnt_km = Counter(km_labels)
+#     maj_km, maj_km_n = cnt_km.most_common(1)[0]
     
-    # majority cluster is benign
-    kept_client_ids = []
-    for idx, client in enumerate(clients_this_round):
-        if km_labels[idx] == maj_km:
-            kept_client_ids.append(client)
-        else:
-            print(f"Client {client} is removed by SafeLoRA aggregation in round {round_idx}.")
+#     # majority cluster is benign
+#     kept_client_ids = []
+#     for idx, client in enumerate(clients_this_round):
+#         if km_labels[idx] == maj_km:
+#             kept_client_ids.append(client)
+#         else:
+#             print(f"Client {client} is removed by SafeLoRA aggregation in round {round_idx}.")
 
-    save_data["S_total"] = y.tolist()
-    save_data["km_labels"] = km_labels.tolist()
+#     save_data["S_total"] = y.tolist()
+#     save_data["km_labels"] = km_labels.tolist()
 
     
 
-    sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
-    for key in global_dict.keys():
-        global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in kept_client_ids])
-    return global_dict
+#     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
+#     for key in global_dict.keys():
+#         global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in kept_client_ids])
+#     return global_dict
 
 
 from copy import deepcopy

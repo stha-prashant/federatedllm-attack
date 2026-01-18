@@ -33,6 +33,8 @@ class FedArguments:
     # safelora
     safe_lora: Optional[bool] = field(default=False, metadata={"help": "whether to use SafeLoRA to secure the aggregation"})
 
+   
+
 @dataclass
 class ScriptArguments:
 
@@ -72,6 +74,9 @@ class ScriptArguments:
     existing_lora: Optional[str] = field(default=None, metadata={"help": "the post training lora path."})
 
     isa: Optional[bool] = field(default=False, metadata={"help": "whether to use ISA as malicious template for attack"})
+
+    safe_lora_original: Optional[bool] = field(default=False, metadata={"help": "whether to use the original SafeLoRA to secure the aggregation"})
+    safelora_cos_thrs: Optional[float] = field(default=0.35, metadata={"help": "the cosine similarity threshold for SafeLoRA"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 

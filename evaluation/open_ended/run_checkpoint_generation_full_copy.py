@@ -83,13 +83,13 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
         print(f"[WARN] Base output dir {base_output_dir} does not exist or is not a directory.")
         return []
     checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
-    # if len(checkpoint_dirs_test) == 0:
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' in str(p.name)]
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'base' not in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' not in str(p.name) and 'base' in str(p.name)]
+    # remove common ones between two lists to avoid duplicates
+    checkpoint_dirs = list(set(checkpoint_dirs))
 
-    # else:
-    #     checkpoint_dirs = checkpoint_dirs_test
+
     if not args.safe_lora_original:
         checkpoint_dirs = [p for p in checkpoint_dirs if 'safe' not in str(p.name)]
     checkpoint_dirs = sorted(checkpoint_dirs,
@@ -103,7 +103,7 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
 
 
 
-datasets = {'mtbench': '/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/mtbench/questions.jsonl', 'advbench': '/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/advbench/advbench.csv'}
+datasets = {'mtbench': './data/mtbench/questions.jsonl', 'advbench': './data/advbench/advbench.csv'}
 import subprocess
 def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], args=None):
     processes = []
@@ -111,7 +111,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
     original_eval_list = eval_list
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f"conda run -n testvllm python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
+            command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
             print("Generating safelora original checkpoint: ", item["safelora_original_saved_path"])
             print(command)
             os.system(command)
@@ -137,7 +137,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
                         print("MTBENCH COMMAND: ", command)                
                     else:
                         # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-                        command = f"conda run -n testvllm python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
+                        command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
 
                     print(command)
                     # input("Press Enter to continue...")
@@ -188,7 +188,7 @@ def get_save_path(checkpoint_dir, ds='advbench', args=None):
     _, exp_name = os.path.split(pre_str)
     checkpoint_id = checkpoint_str.split("-")[-1]
     model_name = f"{exp_name}_{checkpoint_id}"
-    result_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{ds}/model_answer/{model_name}.json"
+    result_path = f"./data/{ds}/model_answer/{model_name}.json"
     if ds == 'mtbench':
         return model_name
     else:
@@ -202,7 +202,7 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
 
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --neptune_id {item["run_id"]}'
+            command = f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --neptune_id {item["run_id"]}'
             print("Judging run id ", item["run_id"], "ds: ", ds)
             os.system(command)
 
@@ -223,7 +223,7 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
                 # if True:
                     checkpoint_int = checkpoint_dir.name.split('-')[-1]
                     print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-                    os.system(f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --neptune_id {item["run_id"]}')
+                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --neptune_id {item["run_id"]}')
                     print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy
@@ -231,7 +231,7 @@ from copy import deepcopy
 def merge_all_checkpoints(runs_dict, eval_list=None, args=None):
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f'python /home/ps9044/FedLLM-Attack/utils/merge_lora.py --lora_path {item["safelora_original_saved_path"]} --base_model_path {item["model_name_or_path"]}'
+            command = f'python ../../utils/merge_lora.py --lora_path {item["safelora_original_saved_path"]} --base_model_path {item["model_name_or_path"]}'
             print("Merging safelora original checkpoint: ", item["safelora_original_saved_path"])
             print(command)
             os.system(command)
@@ -249,7 +249,7 @@ def merge_all_checkpoints(runs_dict, eval_list=None, args=None):
             for checkpoint_dir in checkpoint_dirs:
                 if checkpoint_dir.name.split('-')[-1].split('_')[0] in run_eval_list:
                     print("Merging checkpoint: ", str(checkpoint_dir).split('/')[-1])
-                    command = f'python /home/ps9044/FedLLM-Attack/utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path {item["model_name_or_path"]}'
+                    command = f'python ../../utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path {item["model_name_or_path"]}'
                     print(command)
                     os.system(command)
 
@@ -299,13 +299,13 @@ if __name__ == "__main__":
         current_eval_list = [eval_item]
 
     
-        # merge checkpoints
-        merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
-        print("Merged checkpoint-------------------------------------------------\n\n")
-        # for each dataset, generate
-        for ds in args.datasets:
-            generate_all_responses(RUNS_TO_PROCESS, ds=ds, gpus=args.gpus, eval_list=current_eval_list, args=args)
-        print("Generated responses -------------------------------------------------\n\n")
+        # # merge checkpoints
+        # merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+        # print("Merged checkpoint-------------------------------------------------\n\n")
+        # # for each dataset, generate
+        # for ds in args.datasets:
+        #     generate_all_responses(RUNS_TO_PROCESS, ds=ds, gpus=args.gpus, eval_list=current_eval_list, args=args)
+        # print("Generated responses -------------------------------------------------\n\n")
 
         # # for each dataset, judge
         for ds in args.datasets:
@@ -316,18 +316,18 @@ if __name__ == "__main__":
                 judge_all_responses(RUNS_TO_PROCESS, ds=ds, eval_list=current_eval_list, args=args)
 
         
-        # show results
-        # delete merged full models to save space
-        for item in RUNS_TO_PROCESS:
-            if args.safe_lora_original:
-                shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
-            else:
-                checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
-                for checkpoint_dir in checkpoint_dirs:
-                    if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
-                        full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
-                        print("Deleting full model at: ", full_model_path)
-                        shutil.rmtree(full_model_path, ignore_errors=True)
+        # # show results
+        # # delete merged full models to save space
+        # for item in RUNS_TO_PROCESS:
+        #     if args.safe_lora_original:
+        #         shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
+        #     else:
+        #         checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
+        #         for checkpoint_dir in checkpoint_dirs:
+        #             if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
+        #                 full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
+        #                 print("Deleting full model at: ", full_model_path)
+        #                 shutil.rmtree(full_model_path, ignore_errors=True)
 
     
 

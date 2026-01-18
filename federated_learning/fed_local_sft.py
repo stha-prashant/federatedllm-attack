@@ -35,15 +35,26 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
         )
         trainer.add_callback(SCAFFOLD_Callback(trainer.correction, model))
     elif (fed_args.fed_alg in ALGS_NORMAL_TRAINING) or (fed_args.fed_alg).startswith('local'):
-        trainer = SFTTrainer(
-            model=model,
-            tokenizer=tokenizer,
-            args=training_args,
-            max_seq_length=script_args.seq_length,
-            train_dataset=local_dataset,
-            formatting_func=formatting_prompts_func,
-            data_collator=data_collator,
-        )
+        if formatting_prompts_func is None:
+            trainer = SFTTrainer(
+                model=model,
+                tokenizer=tokenizer,
+                args=training_args,
+                max_seq_length=script_args.seq_length,
+                dataset_text_field='formatted_chat',
+                train_dataset=local_dataset,
+                data_collator=data_collator,
+            )
+        else:
+            trainer = SFTTrainer(
+                model=model,
+                tokenizer=tokenizer,
+                args=training_args,
+                max_seq_length=script_args.seq_length,
+                train_dataset=local_dataset,
+                formatting_func=formatting_prompts_func,
+                data_collator=data_collator,
+            )
     else:
         raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
     return trainer
