@@ -19,7 +19,7 @@ def get_clients_this_round(fed_args, round):
             clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
     return clients_this_round
 
-def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, base_model_path=None, project_matrix=None, script_args=None):
+def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, base_model_path=None, project_matrix=None, script_args=None, asr_rates=None):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     global_auxiliary = None
 
@@ -145,6 +145,10 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
         model_weight_list = []
         global_dict, reweight = IRLS_aggregation_split_restricted(local_dict_list_this_round, 2.0, 0.05)
+
+    # elif fed_args.fed_alg == 'evaladvbench':
+    #     from .evaladvbench import aggr
+    #     global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/evaladvbench/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
     
     elif fed_args.fed_alg == 'dnc':
         local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
@@ -173,6 +177,9 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     elif fed_args.fed_alg == 'cosine_clustering':
         from .cosine_clustering import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/cosine_clustering/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+    elif fed_args.fed_alg == 'eval_filter':
+        from .eval_filter import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/evalfilter/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', script_args=script_args, asr_rates=asr_rates)
     elif fed_args.fed_alg == 'safe_lora':
         from .safelora import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)

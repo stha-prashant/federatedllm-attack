@@ -5,7 +5,7 @@ output/*
 __pycache__/
 *.py[cod]
 *$py.class
-
+**neptune*
 # C extensions
 *.so
 *neptune/*

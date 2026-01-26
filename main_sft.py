@@ -2,7 +2,7 @@ import copy
 import os
 from tqdm import tqdm
 import numpy as np
-
+import json
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import DataCollatorForCompletionOnlyLM
 from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, PeftModel
@@ -20,8 +20,26 @@ from utils.eval_sst2 import compute_sst2_accuracy
 from utils.evaluate_pubmedqa import compute_pubmedqa_accuracy
 from utils.evaluate_squad_v2 import compute_squadv2_scores
 from utils.evaluate_medqa import compute_medqa_accuracy
+from utils.evaluate_advbench import compute_advbench_asr
 from trl import SFTTrainer
 access_token = os.environ.get('HUGGINGFACE_HUB_TOKEN', None)
+
+
+
+def compact_state_dict(sd: dict):
+    out = {}
+    for k, v in sd.items():
+        if torch.is_tensor(v):
+            view_bytes = v.numel() * v.element_size()
+            storage_bytes = v.untyped_storage().nbytes()
+            if storage_bytes > view_bytes:   # fat view -> break shared storage
+                out[k] = v.detach().cpu().clone()
+            else:
+                out[k] = v.detach().cpu()    # cheap
+        else:
+            out[k] = v
+    return out
+
 
 
 # ===== Define the arguments =====
@@ -363,6 +381,8 @@ for round in tqdm(range(fed_args.num_rounds)):
         "cos_per_layer": {},
         "s_per_layer": {}
     }
+    asr_rates = {}
+    client_inferencess = {}
     for client in range(fed_args.num_clients):
 
         if script_args.isa and client >= sum(fed_args.benign_num_clients):
@@ -428,6 +448,15 @@ for round in tqdm(range(fed_args.num_rounds)):
         else:
             local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
 
+        # evaluate the model on advbench after local training to check safety drop
+        asr_rate, client_inferences = compute_advbench_asr(model, tokenizer)
+        print("The harmless rate of AdvBench after client {} local training is {:.2f}%".format(client, asr_rate*100))
+        asr_rates[client] = asr_rate
+        client_inferencess[client] = client_inferences
+
+
+
+
     #     if fed_args.safe_lora:
     #         safe_lora_data = projected_weighted(model, peft_config, project_matrix)
     #         safe_lora_save_data['S_total'][client] = safe_lora_data['S_total']
@@ -438,12 +467,18 @@ for round in tqdm(range(fed_args.num_rounds)):
     #     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
     #         json.dump(safe_lora_save_data, f)
     # save everything
+
+    with open(os.path.join(script_args.output_dir, f"asr_rates_round_{round_idx}.json"), 'w') as f:
+        json.dump(asr_rates, f)
+    with open(os.path.join(script_args.output_dir, f"client_inferencess_round_{round_idx}.json"), 'w') as f:
+        json.dump(client_inferencess, f)
+        
     with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
         pickle.dump({
             "round_idx": round_idx,
             "clients": clients_this_round,
             "local_dict_list": local_dict_list,
-            "global_dict": global_dict,
+            "global_dict": compact_state_dict(global_dict),
             "fed_args": _to_plain_dict(fed_args),
             "sample_num_list": sample_num_list,
             "base_model_path": script_args.model_name_or_path
@@ -456,7 +491,8 @@ for round in tqdm(range(fed_args.num_rounds)):
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict),
         base_model_path=script_args.model_name_or_path,
         project_matrix=project_matrix,
-        script_args=script_args
+        script_args=script_args,
+        asr_rates=asr_rates,
     )
     set_peft_model_state_dict(model, global_dict)   # Update global model
 

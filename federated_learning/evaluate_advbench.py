@@ -1,0 +1,2 @@
+def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=None, output_dir=None, project_matrix=None, script_args=None):
+    # evaluate local_dict_list

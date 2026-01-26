@@ -5,13 +5,13 @@
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=48g
-#SBATCH --time=00-13:00:00
+#SBATCH --time=00-10:00:00
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/logtest.out
 #SBATCH --error=/shared/rc/llm-degredation/logs/logtest.err
 
-module purge
-conda activate fedllmold
+# module purge
+# conda activate fedllmold
 
 export HUGGINGFACE_HUB_TOKEN='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'
 
@@ -26,7 +26,7 @@ lora_r=32
 lora_alpha=64   # twice of lora_r
 lr=5e-5
 
-num_data_per_client=1500
+num_data_per_client=500
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
 local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
@@ -42,7 +42,9 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 benign_num_clients=(7)
 # benign_dataset_names=('stanfordnlp/sst2')
 # benign_dataset_names=('rajpurkar/squad_v2')
-benign_dataset_names=('qiaojin/PubMedQA')
+benign_dataset_names=('triviaqa')
+
+# benign_dataset_names=('qiaojin/PubMedQA')
 
 # benign_dataset_names=('rajpurkar/squad_v2' 'qiaojin/PubMedQA')  # medQA, rajpurkar/squad_v2, stanfordnlp/sst2, qiaojin/PubMedQA
 # benign_dataset_names=("allenai/WildChat") # allenai/WildChat, lmsys/lmsys-chat-1m
