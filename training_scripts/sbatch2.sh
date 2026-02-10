@@ -7,7 +7,7 @@
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/log_%A.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/log_test.err
+#SBATCH --error=/shared/rc/llm-degredation/logs/log_testerr.err
 
 module purge
 conda activate fedllmold
@@ -20,7 +20,7 @@ num_rounds=30
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
-sample_clients=10
+sample_clients=11
 lora_r=32
 lora_alpha=64   # twice of lora_r
 lr=5e-5
@@ -38,7 +38,7 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 # gpu=0
 
 
-benign_num_clients=(6)
+benign_num_clients=(3 3)
 # benign_dataset_names=('stanfordnlp/sst2')
 benign_dataset_names=($dataset)
 # benign_dataset_names=('qiaojin/PubMedQA')
@@ -49,7 +49,7 @@ benign_dataset_names=($dataset)
 # malicious_num_clients=(3)
 # malicious_dataset_names=("lmsys/lmsys-chat-1m") # allenai/WildChat, lmsys/lmsys-chat-1m
 
-malicious_num_clients=(4)
+malicious_num_clients=(5)
 # malicious_dataset_names=('qiaojin/PubMedQA')
 
 # malicious_dataset_names=("MaliciousGen") # PKU-Alignment/BeaverTails, MaliciousGen

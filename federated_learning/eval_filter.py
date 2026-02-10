@@ -38,7 +38,14 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     ]
 
     if len(selected_clients) == 0:
-        assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
+        sorted_clients = sorted(
+            zip(clients_this_round, probs), 
+            key=lambda x: x[1], 
+            reverse=True
+        )
+        selected_clients = [client for client, _ in sorted_clients[: max(1, n_clients // 2)]]
+        print("All clients were detected as malicious by eval_filter aggregation, defaulting to using top half clients as benign")
+        # assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
     
 
 

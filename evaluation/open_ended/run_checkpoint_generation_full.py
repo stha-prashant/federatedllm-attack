@@ -83,21 +83,24 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
         print(f"[WARN] Base output dir {base_output_dir} does not exist or is not a directory.")
         return []
     checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
     # if len(checkpoint_dirs_test) == 0:
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' in str(p.name)]
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'base' not in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'base' not in str(p.name)]
 
     # else:
     #     checkpoint_dirs = checkpoint_dirs_test
-    if not args.safe_lora_original:
+    if args.safe_lora_original_minimal:
+        checkpoint_dirs = [p for p in checkpoint_dirs if 'safelora_original'  in str(p.name)]
+
+    elif not args.safe_lora_original:
         checkpoint_dirs = [p for p in checkpoint_dirs if 'safe' not in str(p.name)]
     checkpoint_dirs = sorted(checkpoint_dirs,
         key=lambda p: int(p.name.split('-')[-1].split('_')[0])
     )
 
 
-    
+    assert len(checkpoint_dirs) > 0, f"No checkpoints found in {base_output_dir}"    
     return checkpoint_dirs
 
 
@@ -285,6 +288,8 @@ if __name__ == "__main__":
     parser.add_argument('--eval_list', type=str, nargs='+', default=['30'], help='List of checkpoint ids to evaluate')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='List of GPU ids to use for generation')
     parser.add_argument('--run_ids', type=int, nargs='+', default=None, help='List of Neptune run ids to process')
+    parser.add_argument('--safe_lora_original_minimal', action='store_true', help='different paths according to this flag')
+    
     parser.add_argument('--safe_lora_original', action='store_true', help='different paths according to this flag')
     args = parser.parse_args()
 

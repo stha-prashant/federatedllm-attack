@@ -238,7 +238,7 @@ elif args.bench_name == "vicuna":
     eval_set = eval_set.map(rename)
     max_new_tokens = 2048
 elif args.bench_name == "advbench":
-    eval_set = datasets.load_dataset("csv", data_files="data/advbench/advbench.csv")["train"]
+    eval_set = datasets.load_dataset("csv", data_files="/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/advbench/advbench.csv")["train"]
     eval_set = eval_set.rename_column("goal", "instruction")
     eval_set = eval_set.remove_columns(["target"])
     max_new_tokens = 1024
@@ -254,7 +254,7 @@ elif 'gsm8k' in args.bench_name:
     eval_set = datasets.load_dataset("HongzheBi/gsm8k", split='test')
     eval_set = eval_set.map(gsm8k_format)
     # only use first 500
-    eval_set = eval_set.select(range(500))
+    eval_set = eval_set.shuffle(seed=2023).select(range(500))
     max_new_tokens = 512
 elif 'sst2' in args.bench_name:
     eval_set = datasets.load_dataset("stanfordnlp/sst2", split='validation')
@@ -299,7 +299,7 @@ elif 'pubmedqa' in args.bench_name:
         return Dataset.from_list(rows)
     eval_set = load_pubmedqa_labeled_raw()
     eval_set = eval_set.map(pubmedqa_format)
-    eval_set = eval_set.select(range(500))
+    eval_set = eval_set.shuffle(seed=2023).select(range(500))
 
     max_new_tokens = 512
 
@@ -324,6 +324,22 @@ elif 'medQA' in args.bench_name:
     eval_set = eval_set.map(medqa_format)
     eval_set = eval_set.select(range(500))
     max_new_tokens = 200
+
+elif 'triviaqa' in args.bench_name:
+    # eval_set = datasets.load_dataset('mandarjoshi/trivia_qa', 'rc.nocontext', split='test')
+    path = '/shared/rc/llm-degredation/qa/wikipedia-dev.json'
+    eval_set = datasets.load_dataset("json", data_files=path, field='Data', split="train")
+    def triviaqa_format_eval(example):
+        example['instruction'] = f"Answer the following trivia question based on your knowledge.\n\nQuestion: {example['Question']}"
+        if len(example['Answer']['Aliases']) > 0:
+            example['response'] = example['Answer']['Aliases'][0]
+        else:
+            example['response'] = "I don't know."
+        return example
+    eval_set = eval_set.map(triviaqa_format_eval)
+    eval_set = eval_set.shuffle(seed=2023).select(range(500))
+    max_new_tokens = 256
+    
 
 
 
@@ -351,9 +367,9 @@ if exp_name is None:
 
 # ============= Load previous results if exists =============
 if args.use_vllm:
-    result_path = f"./data/{args.bench_name}/model_answer/{model_name}_vllm_chat_greedy.json"
+    result_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}_vllm_chat_greedy.json"
 else:
-    result_path = f"./data/{args.bench_name}/model_answer/{model_name}.json"
+    result_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}.json"
 os.makedirs(os.path.dirname(result_path), exist_ok=True)
 if os.path.exists(result_path):
     with open(result_path, "r") as f:
@@ -375,14 +391,14 @@ if args.use_vllm:
         # input_list = [template.format(example["instruction"]+'.', "", "")[:-1] for example in eval_set]
         input_list = [build_chat_template(example) for example in eval_set]
     
-    elif 'gsm8k' in args.bench_name:
-        template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
-        input_list = [template.format(example["instruction"]) for example in eval_set] # no space at end so no -1
+    # elif 'gsm8k' in args.bench_name:
+    #     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
+    #     input_list = [template.format(example["instruction"]) for example in eval_set] # no space at end so no -1
     elif 'sst2' in args.bench_name or 'ssttrain' in args.bench_name:
         template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response:"
         # input_list = [template.format(example["instruction"], example["input"]) for example in eval_set] # no space at end so no -1
         input_list = [build_chat_template(example) for example in eval_set]
-    elif 'squad_v2' in args.bench_name or 'pubmedqa' in args.bench_name or 'medQA' in args.bench_name or 'pubmedtrain' in args.bench_name or 'pubmedval' in args.bench_name or 'squadv2train' in args.bench_name:
+    elif 'squad_v2' in args.bench_name or 'pubmedqa' in args.bench_name or 'medQA' in args.bench_name or 'pubmedtrain' in args.bench_name or 'pubmedval' in args.bench_name or 'squadv2train' in args.bench_name or 'gsm8k' in args.bench_name or 'triviaqa' in args.bench_name:
         input_list = [build_chat_template(example) for example in eval_set]
     else:
         input_list = [template.format(example["instruction"], "", "")[:-1] for example in eval_set] # TODO: use fastchat conversation

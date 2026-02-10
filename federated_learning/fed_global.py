@@ -6,6 +6,8 @@ import copy
 from functools import reduce
 import numpy as np
 import torch.nn.functional as F 
+import os
+import json
 #== attack and defense ==
 
 def get_clients_this_round(fed_args, round):
@@ -97,6 +99,92 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         aggregate_idx = aggregate_idx.cpu() if aggregate_idx.is_cuda else aggregate_idx
 
         aggregate_idx_list = torch.tensor(clients_this_round)[aggregate_idx].tolist()
+
+        # save selected clients to file for analysis
+        path = os.path.join(script_args.output_dir, 'krum')
+        save_data = {
+            'round_idx': round_idx,
+            'selected_clients': aggregate_idx_list
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+        aggregate_idx_list.sort()
+
+        current_idx = 0
+        for key in net_para:
+            length = len(net_para[key].reshape(-1))
+            global_dict[key] = model_weight_krum[current_idx : current_idx + length].reshape(net_para[key].shape)
+            current_idx += length
+
+    elif fed_args.fed_alg == 'krumoriginal':
+        expected_n_attacker = 0
+        for malicious_num_client in fed_args.malicious_num_clients:
+            expected_n_attacker += malicious_num_client
+        
+        expected_n_attacker = round(fed_args.sample_clients*expected_n_attacker/fed_args.num_clients)
+
+        model_weight_list = []
+        for net_id, client in enumerate(clients_this_round):
+            net_para = local_dict_list[client]
+            model_weight = get_weight(net_para).unsqueeze(0)
+            model_weight_list.append(model_weight)
+        model_weight_cat = torch.cat(model_weight_list, dim=0)
+        model_weight_krum, aggregate_idx, neighbours_list = get_krum_original(model_weight_cat, expected_n_attacker)
+        model_weight_krum = model_weight_krum.reshape(-1)
+        # make sure aggregate_idx is on CPU, because clients_this_round is on CPU
+        aggregate_idx = [aggregate_idx]
+
+        aggregate_idx_list = torch.tensor(clients_this_round)[aggregate_idx].tolist()
+
+        # save selected clients to file for analysis
+        path = os.path.join(script_args.output_dir, 'krumoriginal')
+        save_data = {
+            'round_idx': round_idx,
+            'selected_clients': aggregate_idx_list,
+            'closest_neighbours': neighbours_list
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+        aggregate_idx_list.sort()
+
+        current_idx = 0
+        for key in net_para:
+            length = len(net_para[key].reshape(-1))
+            global_dict[key] = model_weight_krum[current_idx : current_idx + length].reshape(net_para[key].shape)
+            current_idx += length
+    
+    elif fed_args.fed_alg == 'multikrum':
+        expected_n_attacker = 0
+        for malicious_num_client in fed_args.malicious_num_clients:
+            expected_n_attacker += malicious_num_client
+        
+        expected_n_attacker = round(fed_args.sample_clients*expected_n_attacker/fed_args.num_clients)
+
+        model_weight_list = []
+        for net_id, client in enumerate(clients_this_round):
+            net_para = local_dict_list[client]
+            model_weight = get_weight(net_para).unsqueeze(0)
+            model_weight_list.append(model_weight)
+        model_weight_cat = torch.cat(model_weight_list, dim=0)
+        model_weight_krum, aggregate_idx, scores = get_multikrum_original(model_weight_cat, expected_n_attacker)
+        model_weight_krum = model_weight_krum.reshape(-1)
+        # make sure aggregate_idx is on CPU, because clients_this_round is on CPU
+        aggregate_idx = aggregate_idx
+
+        aggregate_idx_list = torch.tensor(clients_this_round)[aggregate_idx].tolist()
+
+        # save selected clients to file for analysis
+        path = os.path.join(script_args.output_dir, 'multikrum')
+        save_data = {
+            'round_idx': round_idx,
+            'selected_clients': aggregate_idx_list,
+            'scores': scores.cpu().tolist()
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
         aggregate_idx_list.sort()
 
         current_idx = 0
@@ -162,6 +250,17 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         update_mean, update_std, update_cat, global_weight = get_update_static(local_dict_list_this_round, global_dict)
         i_final,wv = do_dnc(update_cat,m=expected_n_attacker)
         print("===> DnC Aggregation: ", wv)
+
+        path = os.path.join(script_args.output_dir, 'dnc')
+        save_data = {
+            'round_idx': round_idx,
+            'selected_clients': i_final.tolist()
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+
+        
         model_weight_foolsgold = foolsgold_wv_update(wv, update_cat, global_weight)
         
         for net_id, net_para in enumerate(local_dict_list_this_round):
@@ -210,6 +309,33 @@ def get_krum(inputs, attacker_num=1):
     i_star = torch.argmin(nbhDist.sum(2))
     mkrum = inputs[:, :, nbh[:, i_star, :].view(-1)].mean(2, keepdims=True)
     return mkrum, nbh[:, i_star, :].view(-1)
+
+def get_krum_original(inputs, attacker_num=1):
+    n = inputs.shape[0]
+    k = n - attacker_num - 2
+
+    cdist = torch.cdist(inputs, inputs, p=2)
+    # find the k+1 nbh of each point
+    nbhDist, nbh = torch.topk(cdist, k + 1, largest=False)
+    # the point closest to its nbh
+    i_star = torch.argmin(nbhDist.sum(1))
+    krum = inputs[i_star, :]
+    return krum, i_star.cpu().item(), nbh[i_star, :].view(-1).cpu().tolist()
+
+def get_multikrum_original(inputs, attacker_num=1):
+    n = inputs.shape[0]
+    k = n - attacker_num - 2
+    m = k  # common choice
+
+    cdist = torch.cdist(inputs, inputs, p=2)
+    cdist.fill_diagonal_(float("inf"))          # exclude self
+    nbhDist, _ = torch.topk(cdist, k, largest=False)
+    scores = nbhDist.sum(1)                      # krum score for each client
+
+    selected = torch.topk(scores, m, largest=False).indices
+    multikrum = inputs[selected].mean(0, keepdims=True)
+
+    return multikrum, selected.cpu().tolist(), scores.cpu()
 
 def get_update_static(local_dict_list, global_dict):
     model_weight_list = []

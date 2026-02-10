@@ -55,8 +55,26 @@ test_prefixes = [
     "I am not able to",
 ]
 
+# =================== TriviaQA utils ===================
+def metric_max_over_ground_truths(metric_fn, prediction, ground_truths):
+    scores_for_ground_truths = []
+    for ground_truth in ground_truths:
+        score = metric_fn(prediction, ground_truth)
+        scores_for_ground_truths.append(score)
+    return max(scores_for_ground_truths)
 
-# ================= SQuAD v2 utils =================
+def exact_match_score(prediction, ground_truth):
+    return normalize_answer(prediction) == normalize_answer(ground_truth)
+
+
+def is_exact_match(answer_object, prediction):
+    ground_truths = get_ground_truths(answer_object)
+    for ground_truth in ground_truths:
+        if exact_match_score(prediction, ground_truth):
+            return True
+    return False
+
+
 
 def normalize_answer(s: str) -> str:
     """Lower text and remove punctuation, articles and extra whitespace."""
@@ -75,6 +93,12 @@ def normalize_answer(s: str) -> str:
 
     return white_space_fix(remove_articles(remove_punc(lower(s))))
     
+
+
+def get_ground_truths(answer):
+    return answer['normalized_aliases'] + [normalize_answer(ans) for ans in answer.get('aliases', [])]
+
+
 def extract_answer_from_json(text: str) -> str:
     """
     Your training target for SQuAD v2 is:
@@ -188,8 +212,8 @@ def extract_final_decision_medqa(pred: str) -> str:
     return "unknown"
 
 
-response_path = f"./data/{args.bench_name}/model_answer/{args.model_answer}.json"
-save_path = f"./data/{args.bench_name}/model_judgment/{args.judger}_{args.model_answer}.json"
+response_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{args.model_answer}.json"
+save_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_judgment/{args.judger}_{args.model_answer}.json"
 
 os.makedirs(os.path.dirname(save_path), exist_ok=True)
 # ============= Load the model outputs =============
@@ -235,6 +259,7 @@ if args.bench_name == 'advbench' or args.bench_name == 'maliciousgen':
 elif 'gsm8k' in args.bench_name:
     from datasets import load_dataset
     dataset = load_dataset("HongzheBi/gsm8k", split='test')
+    dataset = dataset.shuffle(seed=2023)
     input_data_lst = []
     index = 0
     for data in dataset:
@@ -406,6 +431,44 @@ elif 'squad_v2' in args.bench_name:
     print(f"SQuAD v2 EM: {em * 100:.2f}%")
     score = em
 
+elif 'triviaqa' in args.bench_name:
+    from datasets import load_dataset
+    # dataset = load_dataset('mandarjoshi/trivia_qa', 'rc.nocontext', split='test')
+    path = '/shared/rc/llm-degredation/qa/wikipedia-dev.json'
+    eval_set = load_dataset("json", data_files=path, field='Data', split="train")
+    # shuffle with random fixed seed
+    eval_set = eval_set.shuffle(seed=2023)
+
+    index = 0
+    input_data_lst = []
+    for example in eval_set:
+        if index<500:
+            instance = {}
+            instance['instruction'] = f"Question: {example['Question']}"
+            instance['label'] = example['Answer']['Aliases']
+            input_data_lst += [instance]
+            index+=1
+
+    pred_lst = []
+    for output in tqdm(model_outputs):
+        pred = output["output"].strip()
+        pred_lst.append(pred)
+
+    correct = 0
+    assert len(input_data_lst) == len(pred_lst)
+    for input_data, pred in zip(input_data_lst, pred_lst):
+        input_data['output'] = pred
+        correct += metric_max_over_ground_truths(exact_match_score, pred, input_data['label'])
+        input_data['correct'] = str(metric_max_over_ground_truths(exact_match_score, pred, input_data['label']) == 1.0)
+    total = len(input_data_lst)
+    em = correct / total
+
+    with open(save_path, "w") as f:
+        json.dump(input_data_lst, f, indent=4)
+
+    print(f"TriviaQA EM: {em * 100:.2f}%")
+    score = em
+
 elif 'squadv2train' in args.bench_name:
     from datasets import load_dataset
     dataset = load_dataset('json', data_files='../../gen_data/squad_v2_train_sft.jsonl')['train']
@@ -459,6 +522,7 @@ elif 'pubmedqa' in args.bench_name:
             })
         return Dataset.from_list(rows)
     dataset = load_pubmedqa_labeled_raw()
+    dataset = dataset.shuffle(seed=2023)
 
     index = 0
     input_data_lst = []

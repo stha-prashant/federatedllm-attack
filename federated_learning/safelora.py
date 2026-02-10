@@ -351,8 +351,15 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     ]
 
     if len(selected_clients) == 0:
-        assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
-    
+        # select the top half clients if all are detected as malicious
+        sorted_clients = sorted(
+            zip(clients_this_round, probs), 
+            key=lambda x: x[1], 
+            reverse=True
+        )
+        selected_clients = [client for client, _ in sorted_clients[: max(1, n_clients // 2)]]
+        print("All clients were detected as malicious by SafeLoRA aggregation, defaulting to using top half clients as benign")
+        # assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
 
 
 
@@ -362,7 +369,7 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
                 
     
 
-    safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
+    safe_lora_path = f'{script_args.output_dir}/safelora/Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
     os.makedirs(safe_lora_path, exist_ok=True)
 
     safe_lora_data = {
@@ -374,6 +381,10 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
         "selected_clients": selected_clients
     }
     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora_gmm.json"), 'w') as f:
+        json.dump(safe_lora_data, f)
+    other_path = os.path.join(script_args.output_dir, 'safelora')
+    os.makedirs(other_path, exist_ok=True)
+    with open(os.path.join(other_path, f"round_{round_idx}.json"), 'w') as f:
         json.dump(safe_lora_data, f)
     return global_dict
 

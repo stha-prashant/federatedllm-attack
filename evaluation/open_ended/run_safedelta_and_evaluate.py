@@ -340,18 +340,18 @@ if __name__ == "__main__":
 
     
         # # merge checkpoints
-        # merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
-        # print("Merged checkpoint-------------------------------------------------\n\n")
+        merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+        print("Merged checkpoint-------------------------------------------------\n\n")
       
 
 
 
         # # generate safe_delta model
-        # if args.safe_delta_original:
-        #     run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
-        #     print("Generated SafeDelta models -------------------------------------------------\n\n")
-        #     args.safe_delta_thrs = str(args.safe_delta_thrs).replace('.', 'p')
-        #     # exit()
+        if args.safe_delta_original:
+            run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+            print("Generated SafeDelta models -------------------------------------------------\n\n")
+            args.safe_delta_thrs = str(args.safe_delta_thrs).replace('.', 'p')
+            # exit()
 
           # for each dataset, generate
         for ds in args.datasets:
@@ -368,20 +368,20 @@ if __name__ == "__main__":
                 judge_all_responses(RUNS_TO_PROCESS, ds=ds, eval_list=current_eval_list, args=args)
 
         
-        # # show results
-        # # delete merged full models to save space
-        # for item in RUNS_TO_PROCESS:
-        #     if args.safe_lora_original:
-        #         shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
-        #     else:
-        #         checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
-        #         for checkpoint_dir in checkpoint_dirs:
-        #             if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
-        #                 if args.safe_delta_original:
-        #                     full_model_path = str(checkpoint_dir)+f'SafeDeltas{args.safe_delta_thrs}'
-        #                 full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
-        #                 print("Deleting full model at: ", full_model_path)
-        #                 shutil.rmtree(full_model_path, ignore_errors=True)
+        # show results
+        # delete merged full models to save space
+        for item in RUNS_TO_PROCESS:
+            if args.safe_lora_original:
+                shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
+            else:
+                checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args, safe_delta_criteria=args.safe_delta_original)
+                for checkpoint_dir in checkpoint_dirs:
+                    if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
+                        if args.safe_delta_original:
+                            full_model_path = str(checkpoint_dir)+f'SafeDeltas{args.safe_delta_thrs}'
+                        full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
+                        print("Deleting full model at: ", full_model_path)
+                        shutil.rmtree(full_model_path, ignore_errors=True)
 
     
 

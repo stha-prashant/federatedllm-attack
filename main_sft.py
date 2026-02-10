@@ -52,14 +52,20 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
 
 # ===== Load the dataset =====
-dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
+if fed_args.mixture_num_clients > 0:
+    dataset_list, num_client_list = get_sft_datasets_mixture(script_args, fed_args, tokenizer=tokenizer)    
+else:
+    dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
 print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
 local_datasets = []
 num_clients = sum(num_client_list)
 for dataset, num_client in zip(dataset_list, num_client_list):
-    splited_datasets = split_dataset(fed_args, script_args, dataset, num_client)
+    try:
+        splited_datasets = split_dataset(fed_args, script_args, dataset, num_client)
+    except:
+        splited_datasets = dataset
     local_datasets.extend(splited_datasets)
     
 setattr(fed_args, 'num_clients', num_clients)
@@ -267,13 +273,32 @@ model.print_trainable_parameters()
 
 
 if script_args.safe_lora_original:
-    model, cos_total = projected_weighted_original_safelora(model, peft_config, project_matrix, thrs_cos=script_args.safelora_cos_thrs)
-    print("Cosine similarities per layer after original SafeLoRA projection:", cos_total)
-    # save peft model
-    model.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{script_args.safelora_cos_thrs}')
-    tokenizer.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{script_args.safelora_cos_thrs}')
-    run['parameters/safelora_original_saved_path'] = script_args.existing_lora + f'/checkpoint-30_safelora_original_{script_args.safelora_cos_thrs}'
-    run['parameters/total_output_dir'] = script_args.existing_lora
+    for thrs in script_args.safelora_cos_thrs:
+    #
+        model, cos_total = projected_weighted_original_safelora(model, peft_config, project_matrix, thrs_cos=thrs)
+        print("Cosine similarities per layer after original SafeLoRA projection:", cos_total)
+        # save peft model
+        model.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
+        tokenizer.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
+        run[f'parameters/safelora_original_saved_path_{thrs}'] = script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}'
+        run['parameters/total_output_dir'] = script_args.existing_lora
+
+    eval_str = '30'
+    benign_dataset_names = script_args.existing_lora.lower()
+    dataset_str = ''
+    if 'squad' in benign_dataset_names:
+        dataset_str += "squad_v2 "
+    if 'pubmed' in benign_dataset_names:
+        dataset_str += "pubmedqa "
+    if 'metamathqa' in benign_dataset_names:
+        dataset_str += "gsm8k "
+    if 'triviaqa' in benign_dataset_names:
+        dataset_str += 'triviaqa '
+    run_id = run['sys/id'].fetch().split('-')[-1]
+    run['parameters/fed_args/fed_alg'] = "safelora_original"
+    run['parameters/benign_dataset_names'] = dataset_str
+    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str} --safe_lora_original_minimal'
+    os.system(command)
     exit()
 
 
@@ -316,7 +341,13 @@ run['parameters/benign_num_clients'] = '_'.join([str(n) for n in fed_args.benign
 run['parameters/benign_dataset_names'] = '_'.join(fed_args.benign_dataset_names)
 run['parameters/malicious_num_clients'] = '_'.join([str(n) for n in fed_args.malicious_num_clients])
 run['parameters/malicious_dataset_names'] = '_'.join(fed_args.malicious_dataset_names)
-
+try:
+    run['parameters/mixture_num_clients'] = fed_args.mixture_num_clients
+    if len(fed_args.mixture_benign_proportions) == 1:
+        fed_args.mixture_benign_proportions = fed_args.mixture_benign_proportions * fed_args.mixture_num_clients
+    run['parameters/mixture_benign_proportions'] = '_'.join([str(p) for p in fed_args.mixture_benign_proportions])
+except:
+    pass
 # if fed_args.safe_lora:
 #     safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
 #     os.makedirs(safe_lora_path, exist_ok=True)
@@ -449,10 +480,11 @@ for round in tqdm(range(fed_args.num_rounds)):
             local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
 
         # evaluate the model on advbench after local training to check safety drop
-        asr_rate, client_inferences = compute_advbench_asr(model, tokenizer)
-        print("The harmless rate of AdvBench after client {} local training is {:.2f}%".format(client, asr_rate*100))
-        asr_rates[client] = asr_rate
-        client_inferencess[client] = client_inferences
+        if 'eval_filter' in fed_args.fed_alg:
+            asr_rate, client_inferences = compute_advbench_asr(model, tokenizer)
+            print("The harmless rate of AdvBench after client {} local training is {:.2f}%".format(client, asr_rate*100))
+            asr_rates[client] = asr_rate
+            client_inferencess[client] = client_inferences
 
 
 
@@ -467,11 +499,11 @@ for round in tqdm(range(fed_args.num_rounds)):
     #     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
     #         json.dump(safe_lora_save_data, f)
     # save everything
-
-    with open(os.path.join(script_args.output_dir, f"asr_rates_round_{round_idx}.json"), 'w') as f:
-        json.dump(asr_rates, f)
-    with open(os.path.join(script_args.output_dir, f"client_inferencess_round_{round_idx}.json"), 'w') as f:
-        json.dump(client_inferencess, f)
+    if 'eval_filter' in fed_args.fed_alg:
+        with open(os.path.join(script_args.output_dir, f"asr_rates_round_{round_idx}.json"), 'w') as f:
+            json.dump(asr_rates, f)
+        with open(os.path.join(script_args.output_dir, f"client_inferencess_round_{round_idx}.json"), 'w') as f:
+            json.dump(client_inferencess, f)
         
     with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
         pickle.dump({
@@ -497,7 +529,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     set_peft_model_state_dict(model, global_dict)   # Update global model
 
     # ===== Save the model =====
-    save_steps = 1
+    save_steps = 1 if fed_args.num_rounds <= 30 else 10
     if (round+1) % save_steps == 0  or round+1 == 10:
         trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
 
@@ -576,15 +608,42 @@ for round in tqdm(range(fed_args.num_rounds)):
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
 # eval_list = list(range(1, fed_args.num_rounds+1, eval_steps))
 # eval_str = " ".join(map(str, eval_list))
-eval_str = '30'
 
-# find the neptune run id of this
-benign_dataset_names = '_'.join(fed_args.benign_dataset_names).lower()
-dataset_str = ''
-if 'squad' in benign_dataset_names:
-  dataset_str += "squad_v2 "
-if 'pubmed' in benign_dataset_names:
-  dataset_str += "pubmedqa "
-run_id = run['sys/id'].fetch().split('-')[-1]
-command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench  --eval_list {eval_str}'
-os.system(command)
+if fed_args.num_rounds == 30:
+    eval_str = '30' 
+
+
+    # find the neptune run id of this
+    benign_dataset_names = '_'.join(fed_args.benign_dataset_names).lower()
+    dataset_str = ''
+    if 'squad' in benign_dataset_names:
+        dataset_str += "squad_v2 "
+    if 'pubmed' in benign_dataset_names:
+        dataset_str += "pubmedqa "
+    if 'metamathqa' in benign_dataset_names:
+        dataset_str += "gsm8k "
+    if 'triviaqa' in benign_dataset_names:
+        dataset_str += 'triviaqa '
+    run_id = run['sys/id'].fetch().split('-')[-1]
+    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
+    os.system(command)
+
+
+elif fed_args.num_rounds == 50:
+    eval_str = '50'
+    benign_dataset_names = script_args.existing_lora.lower()
+    dataset_str = ''
+    if 'squad' in benign_dataset_names:
+        dataset_str += "squad_v2 "
+    if 'pubmed' in benign_dataset_names:
+        dataset_str += "pubmedqa "
+    if 'metamathqa' in benign_dataset_names:
+        dataset_str += "gsm8k "
+    if 'triviaqa' in benign_dataset_names:
+        dataset_str += 'triviaqa '
+    run_id = run['sys/id'].fetch().split('-')[-1]
+    run['parameters/fed_args/fed_alg'] = "postfinetune"
+    run['parameters/benign_dataset_names'] = dataset_str
+    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
+    os.system(command)
+

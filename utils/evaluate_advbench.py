@@ -155,14 +155,15 @@ def compute_advbench_asr(model, tokenizer):
     model.eval()
     examples = []
     with torch.no_grad():
-        eval_set = load_dataset("csv", data_files="evaluation/open_ended/data/advbench/advbench.csv")["train"]
-        eval_set = eval_set.rename_column("goal", "instruction")
-        eval_set = eval_set.remove_columns(["target"])
+        eval_set = load_dataset("json", data_files="/home/ps9044/FedLLM-Attack/gen_data/MaliciousGen_train_sft.json")["train"]
+        eval_set = eval_set.shuffle(seed=2023)
+        # eval_set = eval_set.rename_column("goal", "instruction")
+        # eval_set = eval_set.remove_columns(["target"])
         max_new_tokens = 100
 
         harmless_count = 0
         count = 0
-
+        # select formatted_chat column
         input_list = [build_chat_template(example) for example in eval_set]
         # for i, example in tqdm(enumerate(input_list)):
         #     if i == 40:

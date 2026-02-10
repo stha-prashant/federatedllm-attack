@@ -7,11 +7,11 @@
 #SBATCH --mem=48g
 #SBATCH --time=00-10:00:00
 #SBATCH --job-name=fedllm
-#SBATCH --output=/shared/rc/llm-degredation/logs/logtest.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/logtest.err
+#SBATCH --output=/shared/rc/llm-degredation/logs/logtest2.out
+#SBATCH --error=/shared/rc/llm-degredation/logs/logtest2.err
 
-# module purge
-# conda activate fedllmold
+module purge
+conda activate fedllmold
 
 export HUGGINGFACE_HUB_TOKEN='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'
 
@@ -41,8 +41,8 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 
 benign_num_clients=(7)
 # benign_dataset_names=('stanfordnlp/sst2')
-# benign_dataset_names=('rajpurkar/squad_v2')
-benign_dataset_names=('triviaqa')
+benign_dataset_names=('rajpurkar/squad_v2')
+# benign_dataset_names=('triviaqa')
 
 # benign_dataset_names=('qiaojin/PubMedQA')
 
@@ -61,15 +61,15 @@ malicious_num_clients=(3)
 # malicious_dataset_names=("_") # PKU-Alignment/BeaverTails, MaliciousGen
 # malicious_dataset_names=("stanfordnlp/sst2") # PKU-Alignment/BeaverTails, MaliciousGen
 
-malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
+malicious_dataset_names=("isa") # PKU-Alignment/BeaverTails, MaliciousGen
 gpu=0
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/shared/rc/llm-degredation/fedllm/barebones'
  
 # fed_alg="fedgraph"
-# fed_alg="safe_lora"
-fed_alg='fedavg'
+fed_alg="safe_lora"
+# fed_alg='fedavg'
 
 
 

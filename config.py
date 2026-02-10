@@ -29,6 +29,9 @@ class FedArguments:
     malicious_num_clients: Optional[List[int]] = field(default=list, metadata={"help": "the numberlist of malicious clients"})
     benign_dataset_names: Optional[List[str]] = field(default=list, metadata={"help": "the dataset name"})
     malicious_dataset_names: Optional[List[str]] = field(default=list, metadata={"help": "the malicious dataset name"})
+    mixture_num_clients: Optional[int] = field(default=0, metadata={"help": "the number of mixture clients"})
+    mixture_benign_proportions: Optional[List[float]] = field(default=list, metadata={"help": "the benign data proportions for mixture clients"})
+
 
     # safelora
     safe_lora: Optional[bool] = field(default=False, metadata={"help": "whether to use SafeLoRA to secure the aggregation"})
@@ -76,7 +79,7 @@ class ScriptArguments:
     isa: Optional[bool] = field(default=False, metadata={"help": "whether to use ISA as malicious template for attack"})
 
     safe_lora_original: Optional[bool] = field(default=False, metadata={"help": "whether to use the original SafeLoRA to secure the aggregation"})
-    safelora_cos_thrs: Optional[float] = field(default=0.35, metadata={"help": "the cosine similarity threshold for SafeLoRA"})
+    safelora_cos_thrs: Optional[List[float]] = field(default=0.35, metadata={"help": "the cosine similarity threshold for SafeLoRA"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 
@@ -131,6 +134,21 @@ def get_model_config(script_args):
         torch_dtype = None
     return device_map, quantization_config, torch_dtype
 
+# def create_experiment_name(script_args, fed_args):
+#     benign_parts = []
+#     for name, num in zip(fed_args.benign_dataset_names, fed_args.benign_num_clients):
+#         simplified_name = name.split('/')[-1].split('-')[0]
+#         benign_parts.append(f"{simplified_name}{num}")
+
+#     malicious_parts = []
+#     for name, num in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
+#         simplified_name = name.split('/')[-1].split('-')[0]
+#         malicious_parts.append(f"{simplified_name}{num}")
+    
+#     filename = "_".join(benign_parts + malicious_parts)
+#     return filename
+
+
 def create_experiment_name(script_args, fed_args):
     benign_parts = []
     for name, num in zip(fed_args.benign_dataset_names, fed_args.benign_num_clients):
@@ -141,8 +159,18 @@ def create_experiment_name(script_args, fed_args):
     for name, num in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
         simplified_name = name.split('/')[-1].split('-')[0]
         malicious_parts.append(f"{simplified_name}{num}")
+
+    proportion_parts = []
+    proportions = fed_args.mixture_benign_proportions
+    if proportions is not None:
+        if len(proportions) == 1:
+            proportion_parts.extend([f"{proportions[0]:.2f}"]*fed_args.mixture_num_clients)
+        else:
+            for proportion in proportions:
+                proportion_parts.append(f"{proportion:.2f}")
+        
     
-    filename = "_".join(benign_parts + malicious_parts)
+    filename = "_".join(benign_parts + malicious_parts + proportion_parts)
     return filename
 
 def save_config(script_args, fed_args):

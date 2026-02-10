@@ -4,10 +4,11 @@
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
+#SBATCH -t 00-10:00:00
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/log_%A.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/log_test.err
+#SBATCH --error=/shared/rc/llm-degredation/logs/log_%A.err
 
 module purge
 conda activate fedllmold
@@ -15,12 +16,12 @@ conda activate fedllmold
 export HUGGINGFACE_HUB_TOKEN='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'
 
 
-max_steps=$steps
-num_rounds=30
+max_steps=10
+num_rounds=100
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
-sample_clients=10
+sample_clients=3
 lora_r=32
 lora_alpha=64   # twice of lora_r
 lr=5e-5
@@ -38,9 +39,10 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 # gpu=0
 
 
-benign_num_clients=(6)
+benign_num_clients=(7)
+
 # benign_dataset_names=('stanfordnlp/sst2')
-benign_dataset_names=($dataset)
+benign_dataset_names=("metamathqa")
 # benign_dataset_names=('qiaojin/PubMedQA')
 
 # benign_dataset_names=('rajpurkar/squad_v2' 'qiaojin/PubMedQA')  # medQA, rajpurkar/squad_v2, stanfordnlp/sst2, qiaojin/PubMedQA
@@ -49,7 +51,7 @@ benign_dataset_names=($dataset)
 # malicious_num_clients=(3)
 # malicious_dataset_names=("lmsys/lmsys-chat-1m") # allenai/WildChat, lmsys/lmsys-chat-1m
 
-malicious_num_clients=(4)
+# malicious_num_clients=(3)
 # malicious_dataset_names=('qiaojin/PubMedQA')
 
 # malicious_dataset_names=("MaliciousGen") # PKU-Alignment/BeaverTails, MaliciousGen
@@ -61,12 +63,15 @@ malicious_num_clients=(4)
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
 gpu=0
 
+
+malicious_num_clients=(3)
+
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/shared/rc/llm-degredation/fedllm/barebones'
  
 # fed_alg="fedgraph"
 # fed_alg="safe_lora"
-fed_alg=$method
+fed_alg="dnc"
 
 
 

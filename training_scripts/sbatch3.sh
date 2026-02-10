@@ -7,7 +7,7 @@
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/log_%A.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/log_test.err
+#SBATCH --error=/shared/rc/llm-degredation/logs/log_%A.err
 
 module purge
 conda activate fedllmold
@@ -39,6 +39,7 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 
 
 benign_num_clients=(6)
+
 # benign_dataset_names=('stanfordnlp/sst2')
 benign_dataset_names=($dataset)
 # benign_dataset_names=('qiaojin/PubMedQA')
@@ -49,7 +50,7 @@ benign_dataset_names=($dataset)
 # malicious_num_clients=(3)
 # malicious_dataset_names=("lmsys/lmsys-chat-1m") # allenai/WildChat, lmsys/lmsys-chat-1m
 
-malicious_num_clients=(4)
+# malicious_num_clients=(3)
 # malicious_dataset_names=('qiaojin/PubMedQA')
 
 # malicious_dataset_names=("MaliciousGen") # PKU-Alignment/BeaverTails, MaliciousGen
@@ -60,6 +61,11 @@ malicious_num_clients=(4)
 
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
 gpu=0
+
+
+mixture_num_clients=10
+mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 0.9 0.9 0.9 0.9)
+malicious_num_clients=(4)
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/shared/rc/llm-degredation/fedllm/barebones'
@@ -92,5 +98,7 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --safe_lora \
  --template "chat" \
+ --mixture_num_clients $mixture_num_clients \
+ --mixture_benign_proportions ${mixture_benign_proportions[@]}
 #  --safe_lora_original \
 #  --isa \

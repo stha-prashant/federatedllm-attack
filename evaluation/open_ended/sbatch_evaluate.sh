@@ -5,15 +5,15 @@
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=45g
-#SBATCH --time=00-6:00:00
+#SBATCH --time=00-2:00:00
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/logeval_%A.out
 #SBATCH --error=/shared/rc/llm-degredation/logs/logeval_%A.err
 
 
 export HUGGINGFACE_HUB_TOKEN='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'
-# module purge
-# conda activate fedllmold
+module purge
+conda activate fedllmold
 
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.60 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
@@ -21,7 +21,7 @@ export HUGGINGFACE_HUB_TOKEN='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'
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.20 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 1.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
-python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 10000.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
+# python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 10000.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.05 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.01 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 
@@ -46,6 +46,7 @@ python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 1
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.05 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 
+python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids 465 --datasets advbench triviaqa --eval_list 30
 
 # python run_checkpoint_generation_full.py --safe_lora_original  --run_ids 292 295 299 302 --datasets advbench squad_v2 --eval_list 30
 # python run_checkpoint_generation_full.py   --run_ids 244 --datasets advbench --eval_list 30
@@ -109,7 +110,7 @@ python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 1
 # python run_checkpoint_generation_full.py --datasets pubmedtrain pubmedval --eval_list 21 22 23 24 25 26 27 28 29 30  --run_ids 313 314 315 316
 
 # python run_checkpoint_generation_full.py --datasets advbench pubmedqa --eval_list 9 10  --run_ids 313 314 315 316
-python run_checkpoint_generation_full.py --datasets pubmedqa advbench --eval_list 9 --run_ids 287
+# python run_checkpoint_generation_full.py --datasets pubmedqa advbench --eval_list 9 --run_ids 287
 # python run_checkpoint_generation_full.py --datasets advbench pubmedqa --eval_list 25 26 27 28 29 30 --run_ids 313 314 315 316
 
 
