@@ -36,6 +36,8 @@ class FedArguments:
     # safelora
     safe_lora: Optional[bool] = field(default=False, metadata={"help": "whether to use SafeLoRA to secure the aggregation"})
 
+    mixture_dirichlet_alpha: Optional[float] = field(default=0.5, metadata={"help": "the alpha parameter of the Dirichlet distribution for data partitioning in non-iid setting"})
+
    
 
 @dataclass

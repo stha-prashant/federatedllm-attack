@@ -93,7 +93,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             model_weight = get_weight(net_para).unsqueeze(0)
             model_weight_list.append(model_weight)
         model_weight_cat = torch.cat(model_weight_list, dim=0)
-        model_weight_krum, aggregate_idx = get_krum(model_weight_cat, expected_n_attacker)
+        model_weight_krum, aggregate_idx, nbhdist, nbh = get_krum(model_weight_cat, expected_n_attacker)
         model_weight_krum = model_weight_krum.reshape(-1)
         # make sure aggregate_idx is on CPU, because clients_this_round is on CPU
         aggregate_idx = aggregate_idx.cpu() if aggregate_idx.is_cuda else aggregate_idx
@@ -104,7 +104,9 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         path = os.path.join(script_args.output_dir, 'krum')
         save_data = {
             'round_idx': round_idx,
-            'selected_clients': aggregate_idx_list
+            'selected_clients': aggregate_idx_list,
+            'nbhdist': nbhdist.cpu().tolist(),
+            'nbh': nbh.cpu().tolist()
         }
         os.makedirs(path, exist_ok=True)
         with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
@@ -116,6 +118,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_krum[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length
+        print(f"===> Krum selected client: {aggregate_idx_list[0]} in round {round_idx}")
 
     elif fed_args.fed_alg == 'krumoriginal':
         expected_n_attacker = 0
@@ -154,7 +157,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_krum[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length
-    
+        print(f"===> Krum original selected client: {aggregate_idx_list[0]} in round {round_idx}")
     elif fed_args.fed_alg == 'multikrum':
         expected_n_attacker = 0
         for malicious_num_client in fed_args.malicious_num_clients:
@@ -227,7 +230,8 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         for key in net_para:
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
-            current_idx += length     
+            current_idx += length   
+          
     
     elif fed_args.fed_alg == 'residual':
         local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
@@ -270,9 +274,13 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length
+        
     elif fed_args.fed_alg == 'fedgraph':
         from .safelayer_vis import aggr
-        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=f'./output/fedgraph/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+        output_dir = os.path.join(script_args.output_dir, 'fedgraph')
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=output_dir)
+
+        # global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=f'./output/fedgraph/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
     elif fed_args.fed_alg == 'cosine_clustering':
         from .cosine_clustering import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/cosine_clustering/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
@@ -308,7 +316,7 @@ def get_krum(inputs, attacker_num=1):
     # the point closest to its nbh
     i_star = torch.argmin(nbhDist.sum(2))
     mkrum = inputs[:, :, nbh[:, i_star, :].view(-1)].mean(2, keepdims=True)
-    return mkrum, nbh[:, i_star, :].view(-1)
+    return mkrum, nbh[:, i_star, :].view(-1), nbhDist, nbh
 
 def get_krum_original(inputs, attacker_num=1):
     n = inputs.shape[0]

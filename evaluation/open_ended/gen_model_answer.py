@@ -224,6 +224,26 @@ def medqa_format(example):
     example['response'] = f"The correct answer is: {correct_option}"
     return example
 
+def medmcqa_format(example):
+    options_keys = ['opa', 'opb', 'opc', 'opd']
+    options = {key[-1].upper(): example[key] for key in options_keys}
+    options_str = '\n'.join([f"{key}. {value}" for key, value in options.items()])
+    example['instruction'] = f"Answer the following medical question by choosing the correct option from A, B, C, or D\n\nQuestion: {example['question']}\nOptions:\n{options_str}\n\nProvide your answer in the format: 'The correct answer is: X', where X is A, B, C, or D."
+    key_str = ['A', 'B', 'C', 'D']
+    correct_option = key_str[example['cop']] 
+    example['response'] = f"The correct answer is: {correct_option}"
+    return example
+
+def careqa_format(example):
+    options_keys = ['op1', 'op2', 'op3', 'op4']
+    key_str = ['A', 'B', 'C', 'D']
+    options = {key_str[i]: example[options_keys[i]] for i in range(len(options_keys))}
+    options_str = '\n'.join([f"{key}. {value}" for key, value in options.items()])
+    example['instruction'] = f"Answer the following medical question by choosing the correct option from A, B, C, or D\n\nQuestion: {example['question']}\nOptions:\n{options_str}\n\nProvide your answer in the format: 'The correct answer is: X', where X is A, B, C, or D."
+    correct_option = key_str[example['cop']-1] 
+    example['response'] = f"The correct answer is: {correct_option}"
+    return example
+    
 
 # ============= Load dataset =============
 if args.bench_name == "alpaca":
@@ -278,6 +298,20 @@ elif 'squadv2train' in args.bench_name:
     eval_set = eval_set.map(squadv2_format)
     eval_set = eval_set.shuffle(seed=2023).select(range(500))
     max_new_tokens = 200
+elif 'medmcqa' in args.bench_name:
+    eval_set = datasets.load_dataset('openlifescienceai/medmcqa', split='test')
+    eval_set = eval_set.map(medmcqa_format)
+    eval_set = eval_set.shuffle(seed=2023).select(range(500))
+    max_new_tokens = 128
+elif 'careqa' in args.bench_name:
+    url = "https://huggingface.co/datasets/HPAI-BSC/CareQA/resolve/refs%2Fconvert%2Fparquet/CareQA_en/test/0000.parquet"
+    dataset  = datasets.load_dataset("parquet", data_files={"test": url}, split="test")
+    # shuffle and take the first 80% samples
+    dataset = dataset.shuffle(seed=2023)
+    # select last 20% for test
+    dataset = dataset.select(range(int(len(dataset)*0.8), len(dataset)))
+    eval_set = dataset.map(careqa_format)
+    max_new_tokens = 128
 
 
 elif 'pubmedqa' in args.bench_name:

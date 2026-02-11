@@ -22,9 +22,14 @@ from utils.evaluate_squad_v2 import compute_squadv2_scores
 from utils.evaluate_medqa import compute_medqa_accuracy
 from utils.evaluate_advbench import compute_advbench_asr
 from trl import SFTTrainer
+from utils.process_dataset import get_sft_datasets_dirichlet
 access_token = os.environ.get('HUGGINGFACE_HUB_TOKEN', None)
 
-
+if access_token is None:
+    raise ValueError("HUGGINGFACE_HUB_TOKEN environment variable not set.")
+run = neptune.init_run(project="fedllm/fedllm",
+    api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ==",
+)
 
 def compact_state_dict(sd: dict):
     out = {}
@@ -52,15 +57,20 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
 
 # ===== Load the dataset =====
+# if fed_args.mixture_num_clients > 0:
+#     dataset_list, num_client_list = get_sft_datasets_mixture(script_args, fed_args, tokenizer=tokenizer)    
+# else:
+#     dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
 if fed_args.mixture_num_clients > 0:
-    dataset_list, num_client_list = get_sft_datasets_mixture(script_args, fed_args, tokenizer=tokenizer)    
+    dataset_list, num_client_list = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
 else:
-    dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
+    dataset_list, num_client_list = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
 print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
 local_datasets = []
 num_clients = sum(num_client_list)
+# breakpoint()
 for dataset, num_client in zip(dataset_list, num_client_list):
     try:
         splited_datasets = split_dataset(fed_args, script_args, dataset, num_client)
@@ -72,11 +82,7 @@ setattr(fed_args, 'num_clients', num_clients)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
-if access_token is None:
-    raise ValueError("HUGGINGFACE_HUB_TOKEN environment variable not set.")
-run = neptune.init_run(project="fedllm/fedllm",
-    api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ==",
-)
+
 
 
 project_matrix = None
@@ -389,13 +395,13 @@ training_loss = [[] for i in range(fed_args.num_clients)]
 #     with open(os.path.join(script_args.output_dir, f"squadv2_eval_round_{0}.json"), 'w') as f:
 #         json.dump(output_lst, f, indent=4)
 
-if 'medQA' in fed_args.benign_dataset_names:
-    print(">> Evaluating on MedQA ...")
-    medqa_acc, output_lst = compute_medqa_accuracy(model, tokenizer)
-    print(f"*** Evaluation on MedQA: Accuracy = {medqa_acc*100:.2f}% ***")
-    run["evaluation/medqa_accuracy"].append(medqa_acc, step=0)
-    with open(os.path.join(script_args.output_dir, f"medqa_eval_round_{0}.json"), 'w') as f:
-        json.dump(output_lst, f, indent=4)
+# if 'medQA' in fed_args.benign_dataset_names:
+#     print(">> Evaluating on MedQA ...")
+#     medqa_acc, output_lst = compute_medqa_accuracy(model, tokenizer)
+#     print(f"*** Evaluation on MedQA: Accuracy = {medqa_acc*100:.2f}% ***")
+#     run["evaluation/medqa_accuracy"].append(medqa_acc, step=0)
+#     with open(os.path.join(script_args.output_dir, f"medqa_eval_round_{0}.json"), 'w') as f:
+#         json.dump(output_lst, f, indent=4)
     
 
 for round in tqdm(range(fed_args.num_rounds)):
@@ -537,15 +543,15 @@ for round in tqdm(range(fed_args.num_rounds)):
     #     exit()
 
     # ===== Evaluate the model =====
-    eval_steps = 10 if fed_args.num_rounds == 30 else 25
-    if (round+1) % eval_steps == 0 or round+1 == fed_args.num_rounds or round == 0:
-        if 'medQA' in fed_args.benign_dataset_names:
-            print(">> Evaluating on MedQA ...")
-            medqa_acc, output_lst = compute_medqa_accuracy(model, tokenizer)
-            print(f"*** Evaluation on MedQA: Accuracy = {medqa_acc*100:.2f}% ***")
-            run["evaluation/medqa_accuracy"].append(medqa_acc, step=round_idx)
-            with open(os.path.join(script_args.output_dir, f"medqa_eval_round_{round_idx}.json"), 'w') as f:
-                json.dump(output_lst, f, indent=4)
+    # eval_steps = 10 if fed_args.num_rounds == 30 else 25
+    # if (round+1) % eval_steps == 0 or round+1 == fed_args.num_rounds or round == 0:
+    #     if 'medQA' in fed_args.benign_dataset_names:
+    #         print(">> Evaluating on MedQA ...")
+    #         medqa_acc, output_lst = compute_medqa_accuracy(model, tokenizer)
+    #         print(f"*** Evaluation on MedQA: Accuracy = {medqa_acc*100:.2f}% ***")
+    #         run["evaluation/medqa_accuracy"].append(medqa_acc, step=round_idx)
+    #         with open(os.path.join(script_args.output_dir, f"medqa_eval_round_{round_idx}.json"), 'w') as f:
+    #             json.dump(output_lst, f, indent=4)
     #     if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
     #         print(">> Evaluating on SST-2 ...")
     #         sst2_acc, output_lst = compute_sst2_accuracy(model, tokenizer)
@@ -624,6 +630,12 @@ if fed_args.num_rounds == 30:
         dataset_str += "gsm8k "
     if 'triviaqa' in benign_dataset_names:
         dataset_str += 'triviaqa '
+    if 'medqa' in benign_dataset_names:
+        dataset_str += 'medQA '
+    if 'medmcqa' in benign_dataset_names:
+        dataset_str += 'medmcqa '
+    if 'careqa' in benign_dataset_names:
+        dataset_str += 'careqa '
     run_id = run['sys/id'].fetch().split('-')[-1]
     command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
     os.system(command)

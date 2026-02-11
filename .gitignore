@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 **neptune*
+evaluation/open_ended/data/*
 # C extensions
 *.so
 *neptune/*

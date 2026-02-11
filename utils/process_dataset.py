@@ -9,8 +9,100 @@ from federated_learning.split_dataset import split_dataset
 from datasets import disable_caching
 import json
 import pdb
+import numpy as np
+from functools import partial
 
-# disable_caching()  # or add load_from_cache_file=False in the map or filter function
+
+def cap_and_concat(datasets, max_per_dataset=None, seed=2023, id_col="dataset_id"):
+    rng = np.random.default_rng(seed)
+    capped = []
+    for k, ds in enumerate(datasets):
+        n = len(ds) if max_per_dataset is None else min(len(ds), max_per_dataset)
+        idx = rng.permutation(len(ds))[:n].tolist()
+        ds_k = ds.select(idx).add_column(id_col, [k] * n)
+        capped.append(ds_k)
+    return concatenate_datasets(capped)
+
+
+
+def dirichlet_split_by_label(ds_all, num_clients, alpha, per_client=None, seed=2023, id_col="dataset_id"):
+    min_total = 1
+    rng = np.random.default_rng(seed)
+    K = int(max(ds_all[id_col])) + 1
+
+    # pool indices for each dataset_id
+    pools = [[] for _ in range(K)]
+    labels = ds_all[id_col]
+    for i, lab in enumerate(labels):
+        pools[int(lab)].append(i)
+    for k in range(K):
+        rng.shuffle(pools[k])
+
+    alloc = np.zeros((num_clients, K), dtype=int)
+    if per_client is not None:
+        # check capacity
+        if sum(len(p) for p in pools) < num_clients * per_client:
+            raise ValueError("Not enough total samples to give every client per_client examples (no replacement).")
+
+        client_indices = []
+
+        for c in range(num_clients):
+            p = rng.dirichlet([alpha] * K)
+            need = rng.multinomial(per_client, p)  # counts per dataset_id
+
+            # if any pool doesn't have enough, borrow from others that do
+            for k in range(K):
+                if need[k] > len(pools[k]):
+                    extra = need[k] - len(pools[k])
+                    need[k] = len(pools[k])
+                    while extra > 0:
+                        donors = [j for j in range(K) if len(pools[j]) > need[j]]
+                        if not donors:
+                            raise ValueError("Ran out of samples while reallocating. Increase max_per_dataset or reduce per_client/clients.")
+                        j = int(rng.choice(donors))
+                        need[j] += 1
+                        extra -= 1
+
+            alloc[c] = need
+
+            idx_c = []
+            for k in range(K):
+                take = need[k]
+                idx_c.extend(pools[k][:take])
+                pools[k] = pools[k][take:]
+            rng.shuffle(idx_c)
+            client_indices.append(idx_c)
+    else:
+        # simpler case: just get dirichlet proportions for eacch label for all clients
+        while True:
+            client_indices = [[] for _ in range(num_clients)]
+            for i in range(K):
+                p = rng.dirichlet([alpha] * num_clients)
+                counts = rng.multinomial(len(pools[i]), p)
+
+                start = 0
+                for c in range(num_clients):
+                    take = int(counts[c])
+                    alloc[c, i] += take
+                    client_indices[c].extend(pools[i][start:start + take])
+                    start += take
+                
+            totals = np.array([len(idxs) for idxs in client_indices], dtype=int)
+            if np.all(totals >= min_total):
+                # success
+                for c in range(num_clients):
+                    rng.shuffle(client_indices[c])
+                client_datasets = [ds_all.select(idxs) for idxs in client_indices]
+                return client_datasets, alloc, client_indices
+        
+        for c in range(num_clients):
+            rng.shuffle(client_indices[c])
+
+    client_datasets = [ds_all.select(idxs) for idxs in client_indices]
+    return client_datasets, alloc, client_indices
+
+
+
 
 def get_sft_datasets(script_args, fed_args, tokenizer=None):
     print("processing original ------------------")
@@ -48,8 +140,7 @@ def get_sft_datasets(script_args, fed_args, tokenizer=None):
         
     return dataset_list, num_client_list
 
-import numpy as np
-from functools import partial
+
 
 class IndexAllocator:
     def __init__(self, n, seed):
@@ -135,6 +226,93 @@ def get_sft_datasets_mixture(script_args, fed_args, tokenizer=None):
     num_client_list.append(N)
     return dataset_list, num_client_list
 
+def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_mixture=False):
+    print("processing original ------------------")
+
+    dataset_list, num_client_list = [], []
+    total_benign_clients = sum(fed_args.benign_num_clients)
+    return_dataset_list = []
+
+    for benign_dataset_name in fed_args.benign_dataset_names:
+
+        benign_dataset_sample = int(total_benign_clients*fed_args.num_data_per_client/len(fed_args.benign_dataset_names))
+        benign_dataset = get_whole_dataset(benign_dataset_name, script_args.local_data_dir)
+        benign_dataset = benign_dataset.filter(partial(benign_filter_samples, dataset_name=benign_dataset_name))
+        benign_dataset = process_sft_dataset(benign_dataset_name, benign_dataset, script_args.template, benign_dataset_sample, True, script_args.existing_lora is not None, tokenizer=tokenizer)
+
+        dataset_list.append(benign_dataset)
+    all_datasets = cap_and_concat(dataset_list, seed=script_args.seed)
+    benign_client_datasets, alloc, client_indices = dirichlet_split_by_label(all_datasets, total_benign_clients, fed_args.mixture_dirichlet_alpha, per_client=None, seed=script_args.seed)
+    return_dataset_list.extend(benign_client_datasets)
+    num_client_list.append(total_benign_clients)
+
+    return_dataset_list  = [return_dataset_list]
+
+    print(alloc)
+
+    if not malicious_mixture:
+        for malicious_dataset_name, malicious_num_clients in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
+            if malicious_num_clients==0:
+                continue
+            malicious_dataset_sample = int(malicious_num_clients*fed_args.num_data_per_client)
+            malicious_dataset = get_whole_dataset(malicious_dataset_name, script_args.local_data_dir)
+            malicious_dataset = malicious_dataset.filter(partial(malicious_filter_samples, dataset_name=malicious_dataset_name))
+            malicious_dataset = process_sft_dataset(malicious_dataset_name, malicious_dataset, script_args.template, malicious_dataset_sample, False, tokenizer=tokenizer)
+            return_dataset_list.append(malicious_dataset)
+            num_client_list.append(malicious_num_clients)
+        
+        return return_dataset_list, num_client_list
+
+    else:
+        # replace some of the benign datasets with malicious ones according to specified proportion
+
+        # N = fed_args.mixture_num_clients
+        N = total_benign_clients
+        assert len(fed_args.malicious_dataset_names) == 1
+        assert len(fed_args.mixture_benign_proportions) == 1 or len(fed_args.mixture_benign_proportions) == N, len(fed_args.mixture_benign_proportions)  
+        if len (fed_args.mixture_benign_proportions) == 1:
+            ps = [fed_args.mixture_benign_proportions[0]] * N
+        else:
+            ps = fed_args.mixture_benign_proportions
+
+        assert len(ps) == N, f"Expected mixture_benign_proportions length {N}, got {len(ps)}"
+        
+        benign_total_counts = [len(ds) for ds in benign_client_datasets]
+        malicious_total = [int(ps[i] * benign_total_counts[i]) for i in range(N)]
+        benign_to_keep = [benign_total_counts[i] - malicious_total[i] for i in range(len(benign_total_counts))]
+
+        malicious_name = fed_args.malicious_dataset_names[0]
+        malicious_ds = get_whole_dataset(malicious_name, script_args.local_data_dir)
+        malicious_ds = malicious_ds.filter(partial(malicious_filter_samples, dataset_name=malicious_name))
+        malicious_ds = process_sft_dataset(
+            malicious_name, malicious_ds, script_args.template, sum(malicious_total),
+            False, tokenizer=tokenizer
+        )
+        
+        malicious_alloc = IndexAllocator(len(malicious_ds), seed=script_args.seed + 202) if sum(malicious_total) > 0 else None
+        return_dataset_list = []
+        for i in range(N):
+            b_keep = benign_to_keep[i]
+            m_need = malicious_total[i]
+            if b_keep < 0 or m_need < 0:
+                raise ValueError(f"Client {i} has invalid counts: need to keep {b_keep} benign and {m_need} malicious (check proportions / num_data_per_client).")
+            
+            parts = []
+            if b_keep > 0:
+                parts.append(benign_client_datasets[i].shuffle(seed=script_args.seed).select(range(b_keep)))
+            if m_need > 0:
+                idx_m = malicious_alloc.take(m_need)
+                parts.append(malicious_ds.select(idx_m))
+            if not parts:
+                raise ValueError(f"Client {i} got 0 samples (check proportions / num_data_per_client).")
+            client_ds = parts[0] if len(parts) == 1 else concatenate_datasets(parts)
+            client_ds = client_ds.shuffle(seed=script_args.seed + i * 41)
+            return_dataset_list.append(client_ds)
+    
+        return [return_dataset_list], [N]
+
+            
+
 def get_safety_sft_datasets(script_args, fed_args, tokenizer=None):
     dataset = get_whole_dataset(fed_args.safety_dataset_name, script_args.local_data_dir)
     dataset = process_sft_dataset(fed_args.safety_dataset_name, dataset, script_args.template, script_args.safety_num_samples, False, tokenizer=tokenizer)
@@ -200,6 +378,14 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         dataset = load_pubmedqa_artificial_raw()
     elif dataset_name == 'medQA':
         dataset = load_dataset('GBaker/MedQA-USMLE-4-options', split='train')
+    elif dataset_name == 'medmcqa':
+        dataset = load_dataset('openlifescienceai/medmcqa', split='train')
+    elif dataset_name == 'careqa':
+        url = "https://huggingface.co/datasets/HPAI-BSC/CareQA/resolve/refs%2Fconvert%2Fparquet/CareQA_en/test/0000.parquet"
+        dataset  = load_dataset("parquet", data_files={"test": url}, split="test")
+        # shuffle and take the first 80% samples
+        dataset = dataset.shuffle(seed=2023)
+        dataset = dataset.select(range(int(0.8 * len(dataset))))
     elif dataset_name == 'triviaqa':
         # dataset = load_dataset('mandarjoshi/trivia_qa', 'rc.nocontext', split='train')
         path = '/shared/rc/llm-degredation/qa/wikipedia-train.json'
@@ -354,6 +540,28 @@ Question: {example["question"]}"""
             example['response'] = f"The correct answer is: {correct_option}"
             return example
         dataset = dataset.map(medqa_format, remove_columns=['question', 'options', 'answer', 'answer_idx', 'meta_info', 'metamap_phrases'], desc=f"Preprocessing {dataset_name} for unified format.")
+    elif dataset_name in 'medmcqa':
+        def medmcqa_format(example):
+            options_keys = ['opa', 'opb', 'opc', 'opd']
+            options = {key[-1].upper(): example[key] for key in options_keys}
+            options_str = '\n'.join([f"{key}. {value}" for key, value in options.items()])
+            example['instruction'] = f"Answer the following medical question by choosing the correct option from A, B, C, or D\n\nQuestion: {example['question']}\nOptions:\n{options_str}\n\nProvide your answer in the format: 'The correct answer is: X', where X is A, B, C, or D."
+            key_str = ['A', 'B', 'C', 'D']
+            correct_option = key_str[example['cop']] 
+            example['response'] = f"The correct answer is: {correct_option}"
+            return example
+        dataset = dataset.map(medmcqa_format, remove_columns=['question', 'opa', 'opb', 'opc', 'opd', 'cop'], desc=f"Preprocessing {dataset_name} for unified format.")
+    elif dataset_name in 'careqa':
+        def careqa_format(example):
+            options_keys = ['op1', 'op2', 'op3', 'op4']
+            key_str = ['A', 'B', 'C', 'D']
+            options = {key_str[i]: example[options_keys[i]] for i in range(len(options_keys))}
+            options_str = '\n'.join([f"{key}. {value}" for key, value in options.items()])
+            example['instruction'] = f"Answer the following medical question by choosing the correct option from A, B, C, or D\n\nQuestion: {example['question']}\nOptions:\n{options_str}\n\nProvide your answer in the format: 'The correct answer is: X', where X is A, B, C, or D."
+            correct_option = key_str[example['cop']-1] 
+            example['response'] = f"The correct answer is: {correct_option}"
+            return example
+        dataset = dataset.map(careqa_format, remove_columns=['question', 'op1', 'op2', 'op3', 'op4', 'cop'], desc=f"Preprocessing {dataset_name} for unified format.")
     elif dataset_name in ['triviaqa']:
         def triviaqa_format(example):
             example['instruction'] = f"Answer the following trivia question based on your knowledge.\n\nQuestion: {example['Question']}"
