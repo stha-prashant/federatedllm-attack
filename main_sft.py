@@ -62,9 +62,9 @@ if tokenizer.pad_token is None:
 # else:
 #     dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
 if fed_args.mixture_num_clients > 0:
-    dataset_list, num_client_list = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
+    dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
 else:
-    dataset_list, num_client_list = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
+    dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
 print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
@@ -82,7 +82,8 @@ setattr(fed_args, 'num_clients', num_clients)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
-
+with open(os.path.join(script_args.output_dir, 'dirichlet_alloc.json'), 'w') as f:
+    json.dump(alloc.tolist(), f, indent=4)
 
 
 project_matrix = None
@@ -636,6 +637,10 @@ if fed_args.num_rounds == 30:
         dataset_str += 'medmcqa '
     if 'careqa' in benign_dataset_names:
         dataset_str += 'careqa '
+    if 'emrqa' in benign_dataset_names:
+        dataset_str += 'emrqa '
+    if 'cord19' in benign_dataset_names:
+        dataset_str += 'cord19 '
     run_id = run['sys/id'].fetch().split('-')[-1]
     command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
     os.system(command)

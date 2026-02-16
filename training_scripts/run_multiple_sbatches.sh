@@ -2,22 +2,20 @@ jobFile1="training_scripts/sbatch1.sh"
 jobFile2="training_scripts/sbatch2.sh"
 jobFile3="training_scripts/sbatch3.sh"
 
+jobFile4="training_scripts/sbatch_test2.sh"
+
 
 # existing_lors=("/shared/rc/llm-degredation/fedllm/barebones/medQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251203103114" "/shared/rc/llm-degredation/fedllm/barebones/squad_v27_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105506" "/shared/rc/llm-degredation/fedllm/barebones/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105050")
 
-# for method in  "safe_lora" 
-# do
-#     for dataset in "qiaojin/PubMedQA triviaqa" 
-#     do
-#         for steps in 5
-#         do
-#             export method;
-#             export dataset;
-#             export steps;
-#             sbatch -t 00-7:00:00 $jobFile2;
-#         done
-#     done
-# done
+for method in  "krum" "fedgraph" "safe_lora" "fedavg" 
+do
+    for alpha in 0.5 0.2
+    do
+        export method;
+        export alpha;
+        sbatch -t 00-10:00:00 $jobFile4;
+    done
+done
 
 
 # for method in "fedgraph"
@@ -268,30 +266,30 @@ jobFile3="training_scripts/sbatch3.sh"
 # done
 
 
-for method in "dnc" "krum" "safe_lora"
-do
-    for dataset in "metamathqa" "rajpurkar/squad_v2"
-    do
-        for steps in 10
-        do
-            export method;
-            export dataset;
-            export steps;
-            sbatch -t 00-12:00:00 $jobFile3;
-        done
-    done
+# for method in "dnc" "krum" "safe_lora"
+# do
+#     for dataset in "metamathqa" "rajpurkar/squad_v2"
+#     do
+#         for steps in 10
+#         do
+#             export method;
+#             export dataset;
+#             export steps;
+#             sbatch -t 00-12:00:00 $jobFile3;
+#         done
+#     done
 
-    for dataset in "qiaojin/PubMedQA" "triviaqa"
-    do
-        for steps in 5
-        do
-            export method;
-            export dataset;
-            export steps;
-            sbatch -t 00-9:00:00 $jobFile3;
-        done
-    done
-done
+#     for dataset in "qiaojin/PubMedQA" "triviaqa"
+#     do
+#         for steps in 5
+#         do
+#             export method;
+#             export dataset;
+#             export steps;
+#             sbatch -t 00-9:00:00 $jobFile3;
+#         done
+#     done
+# done
 
 
 

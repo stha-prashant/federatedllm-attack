@@ -261,7 +261,7 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
             return_dataset_list.append(malicious_dataset)
             num_client_list.append(malicious_num_clients)
         
-        return return_dataset_list, num_client_list
+        return return_dataset_list, num_client_list, alloc
 
     else:
         # replace some of the benign datasets with malicious ones according to specified proportion
@@ -278,8 +278,8 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
         assert len(ps) == N, f"Expected mixture_benign_proportions length {N}, got {len(ps)}"
         
         benign_total_counts = [len(ds) for ds in benign_client_datasets]
-        malicious_total = [int(ps[i] * benign_total_counts[i]) for i in range(N)]
-        benign_to_keep = [benign_total_counts[i] - malicious_total[i] for i in range(len(benign_total_counts))]
+        benign_to_keep = [int(ps[i] * benign_total_counts[i]) for i in range(N)]
+        malicious_total = [benign_total_counts[i] - benign_to_keep[i] for i in range(N)]
 
         malicious_name = fed_args.malicious_dataset_names[0]
         malicious_ds = get_whole_dataset(malicious_name, script_args.local_data_dir)
@@ -309,7 +309,7 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
             client_ds = client_ds.shuffle(seed=script_args.seed + i * 41)
             return_dataset_list.append(client_ds)
     
-        return [return_dataset_list], [N]
+        return [return_dataset_list], [N], alloc
 
             
 
@@ -384,6 +384,12 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         url = "https://huggingface.co/datasets/HPAI-BSC/CareQA/resolve/refs%2Fconvert%2Fparquet/CareQA_en/test/0000.parquet"
         dataset  = load_dataset("parquet", data_files={"test": url}, split="test")
         # shuffle and take the first 80% samples
+        dataset = dataset.shuffle(seed=2023)
+        dataset = dataset.select(range(int(0.8 * len(dataset))))
+    elif dataset_name == 'emrqa':
+        dataset = load_dataset('Eladio/emrqa-msquad', split='train')
+    elif dataset_name == 'cord19':
+        dataset = load_dataset('medalpaca/medical_meadow_cord19', split='train')
         dataset = dataset.shuffle(seed=2023)
         dataset = dataset.select(range(int(0.8 * len(dataset))))
     elif dataset_name == 'triviaqa':
@@ -562,6 +568,24 @@ Question: {example["question"]}"""
             example['response'] = f"The correct answer is: {correct_option}"
             return example
         dataset = dataset.map(careqa_format, remove_columns=['question', 'op1', 'op2', 'op3', 'op4', 'cop'], desc=f"Preprocessing {dataset_name} for unified format.")
+    
+    elif dataset_name  == 'emrqa':
+        def emrqa_format(example):
+            example['instruction'] = f"""Extract from the following clinical note the minimal span word for word that best answers the question. 
+Context: {example["context"]}
+Question: {example["question"]}"""
+            
+            example['response'] = example['answers']['text'][0]
+            return example
+        dataset = dataset.map(emrqa_format, remove_columns=['context', 'question', 'answers'], desc=f"Preprocessing {dataset_name} for unified format.")
+    elif dataset_name == 'cord19':
+        def cord19_format(example):
+            example['instruction'] = f"Please summarize the given medical abstract to a title.\n\nAbstract: {example['input']}"
+            example['response'] = example['output']
+            return example
+        dataset = dataset.map(cord19_format, remove_columns=['input', 'output'], desc=f"Preprocessing {dataset_name} for unified format.")
+
+    
     elif dataset_name in ['triviaqa']:
         def triviaqa_format(example):
             example['instruction'] = f"Answer the following trivia question based on your knowledge.\n\nQuestion: {example['Question']}"

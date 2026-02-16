@@ -243,7 +243,21 @@ def careqa_format(example):
     correct_option = key_str[example['cop']-1] 
     example['response'] = f"The correct answer is: {correct_option}"
     return example
+
+def emrqa_format(example):
+    example['instruction'] = f"""Extract from the following clinical note the minimal span word for word that best answers the question. 
+Context: {example["context"]}
+Question: {example["question"]}"""
     
+    example['response'] = example['answers']['text'][0]
+    return example
+
+def cord19_format(example):
+    example['instruction'] = f"Please summarize the given medical abstract to a title.\n\nAbstract: {example['input']}"
+    example['response'] = example['output']
+    return example
+
+
 
 # ============= Load dataset =============
 if args.bench_name == "alpaca":
@@ -312,6 +326,19 @@ elif 'careqa' in args.bench_name:
     dataset = dataset.select(range(int(len(dataset)*0.8), len(dataset)))
     eval_set = dataset.map(careqa_format)
     max_new_tokens = 128
+elif 'emrqa' in args.bench_name:
+    dataset = datasets.load_dataset('Eladio/emrqa-msquad', split='validation')
+    # shuffle and take the first 80% samples
+    dataset = dataset.shuffle(seed=2023).select(range(500))
+    # select last 20% for test
+    eval_set = dataset.map(emrqa_format)
+    max_new_tokens = 128
+elif 'cord19' in args.bench_name:
+    dataset = datasets.load_dataset('medalpaca/medical_meadow_cord19', split='train')
+    dataset = dataset.shuffle(seed=2023)
+    dataset = dataset.select(range(int(0.8 * len(dataset)), len(dataset))).select(range(500))
+    eval_set = dataset.map(cord19_format)
+    max_new_tokens = 256
 
 
 elif 'pubmedqa' in args.bench_name:
@@ -421,21 +448,23 @@ if args.use_vllm:
     os.environ["CUDA_VISIBLE_DEVICES"] = f"{args.gpu}"  # VLLM uses this env variable to set GPU device
     # os.environ["VLLM_TARGET_DEVICE"] = 'cpu'
     model = LLM(model=args.base_model_path, enforce_eager=True, gpu_memory_utilization=0.4)
-    if args.bench_name == "advbench" or args.bench_name == 'maliciousgen':
-        # input_list = [template.format(example["instruction"]+'.', "", "")[:-1] for example in eval_set]
-        input_list = [build_chat_template(example) for example in eval_set]
+    # if args.bench_name == "advbench" or args.bench_name == 'maliciousgen':
+    #     # input_list = [template.format(example["instruction"]+'.', "", "")[:-1] for example in eval_set]
+    #     input_list = [build_chat_template(example) for example in eval_set]
     
-    # elif 'gsm8k' in args.bench_name:
-    #     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
-    #     input_list = [template.format(example["instruction"]) for example in eval_set] # no space at end so no -1
-    elif 'sst2' in args.bench_name or 'ssttrain' in args.bench_name:
-        template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response:"
-        # input_list = [template.format(example["instruction"], example["input"]) for example in eval_set] # no space at end so no -1
-        input_list = [build_chat_template(example) for example in eval_set]
-    elif 'squad_v2' in args.bench_name or 'pubmedqa' in args.bench_name or 'medQA' in args.bench_name or 'pubmedtrain' in args.bench_name or 'pubmedval' in args.bench_name or 'squadv2train' in args.bench_name or 'gsm8k' in args.bench_name or 'triviaqa' in args.bench_name:
-        input_list = [build_chat_template(example) for example in eval_set]
-    else:
-        input_list = [template.format(example["instruction"], "", "")[:-1] for example in eval_set] # TODO: use fastchat conversation
+    # # elif 'gsm8k' in args.bench_name:
+    # #     template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
+    # #     input_list = [template.format(example["instruction"]) for example in eval_set] # no space at end so no -1
+    # elif 'sst2' in args.bench_name or 'ssttrain' in args.bench_name:
+    #     template = "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Input:\n{}\n\n### Response:"
+    #     # input_list = [template.format(example["instruction"], example["input"]) for example in eval_set] # no space at end so no -1
+    #     input_list = [build_chat_template(example) for example in eval_set]
+    # elif 'squad_v2' in args.bench_name or 'pubmedqa' in args.bench_name or 'medQA' in args.bench_name or 'pubmedtrain' in args.bench_name or 'pubmedval' in args.bench_name or 'squadv2train' in args.bench_name or 'gsm8k' in args.bench_name or 'triviaqa' in args.bench_name:
+    #     input_list = [build_chat_template(example) for example in eval_set]
+    # else:
+    #     input_list = [template.format(example["instruction"], "", "")[:-1] for example in eval_set] # TODO: use fastchat conversation
+    
+    input_list = [build_chat_template(example) for example in eval_set]
     input_list = input_list[existing_len:]
     print(f">> Example input: {input_list[0]}")
     sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_new_tokens)

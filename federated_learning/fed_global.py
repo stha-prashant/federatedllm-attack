@@ -118,7 +118,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_krum[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length
-        print(f"===> Krum selected client: {aggregate_idx_list[0]} in round {round_idx}")
+        print(f"===> Krum selected client: {aggregate_idx_list} in round {round_idx}")
 
     elif fed_args.fed_alg == 'krumoriginal':
         expected_n_attacker = 0

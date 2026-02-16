@@ -4,14 +4,13 @@
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
-#SBATCH -t 00-18:00:00
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
 #SBATCH --output=/scratch/ps9044/fedllm/log_%A.out
 #SBATCH --error=/scratch/ps9044/fedllm/log_test.err
 
-# module purge
-# conda activate fedllmold
+module purge
+conda activate fedllmold
 
 export HUGGINGFACE_HUB_TOKEN='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'
 
@@ -39,10 +38,10 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 # gpu=0
 
 
-benign_num_clients=(10)
+benign_num_clients=(7)
 
 # benign_dataset_names=('stanfordnlp/sst2')
-benign_dataset_names=("qiaojin/PubMedQA" "medQA" "medmcqa" "careqa")
+benign_dataset_names=("qiaojin/PubMedQA" "medQA" "emrqa" "cord19")
 # mixture_num_clients=10
 # mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5)
 
@@ -74,8 +73,8 @@ output_dir='/scratch/ps9044/newsetting'
  
 # fed_alg="fedgraph"
 # fed_alg="eval_filter"
-fed_alg="krum"
-mixture_dirichlet_alpha=0.5
+fed_alg=$method
+mixture_dirichlet_alpha=$alpha
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \

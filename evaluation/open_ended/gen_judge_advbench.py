@@ -231,6 +231,10 @@ existing_length = len(judge_list)
 print(f">> Existing length: {existing_length}")
 
 
+def minimum_normalization(s):
+    s = s.lower().strip()
+    return s
+
 
 if args.bench_name == 'advbench' or args.bench_name == 'maliciousgen':
     count = 0
@@ -303,6 +307,105 @@ elif 'gsm8k' in args.bench_name:
     print("GSM8K Accuracy: {:.2f}%".format(accuracy * 100))
 
     score = accuracy
+
+elif 'emrqa' in args.bench_name:
+    from datasets import load_dataset
+    dataset = load_dataset('Eladio/emrqa-msquad', split='validation')
+    dataset = dataset.shuffle(seed=2023)
+
+    input_data_lst = []
+    index = 0
+    for example in dataset:
+        if index < 500:
+            instance = {}
+            instance['instruction'] = f"{example['context']}\nQuestion: {example['question']}"
+            instance['label'] = example['answers']['text'][0]
+            input_data_lst += [instance]
+            index += 1
+    
+    pred_lst = []
+    for output in tqdm(model_outputs):
+        pred = output["output"].strip()
+        pred_lst.append(pred)
+    
+    correct = 0
+    total = 0
+    output_lst = []
+    for input_data, pred in zip(input_data_lst, pred_lst):
+        input_data['output'] = pred
+        if normalize_answer(pred) == normalize_answer(input_data['label']):
+            correct += 1
+            input_data['correct'] = 'True'
+        else:
+            input_data['correct'] = 'False'
+        total += 1
+        output_lst.append(input_data)
+    
+    accuracy = correct / total
+    output_lst.append("Overall Accuracy: {:.2f}%".format(accuracy * 100))
+    print("EMRQA Accuracy: {:.2f}%".format(accuracy * 100))
+
+    # ROUGE-L (batched, faster)
+    import evaluate
+    rouge = evaluate.load("rouge")
+
+    preds_norm = [minimum_normalization(p) for p in pred_lst]
+    refs_norm  = [minimum_normalization(x["label"]) for x in input_data_lst]
+
+    scores = rouge.compute(
+        predictions=preds_norm,
+        references=refs_norm,
+        use_stemmer=True,
+    )
+    rouge_l = scores["rougeL"]  # typically F1 aggregate
+    print(f"EMRQA Average ROUGE-L: {rouge_l * 100:.2f}%")
+
+    score = rouge_l
+
+
+
+
+elif 'cord19' in args.bench_name:
+    from datasets import load_dataset
+    dataset = load_dataset('medalpaca/medical_meadow_cord19', split='train')
+    dataset = dataset.shuffle(seed=2023)
+    dataset = dataset.select(range(int(0.8 * len(dataset)), len(dataset)))
+
+    # use rouge-l score on normalized text for evaluating the summarization task
+    input_data_lst = []
+    index = 0
+    for example in dataset:
+        if index < 500:
+            instance = {}
+            instance['instruction'] = f"{example['input']}"
+            instance['label'] = example['output']
+            input_data_lst += [instance]
+            index += 1
+    
+    pred_lst = []
+    for output in tqdm(model_outputs):
+        pred = output["output"].strip()
+        pred_lst.append(pred)
+    
+    import evaluate
+    rouge = evaluate.load('rouge')
+    total = 0
+    output_lst = []
+    total_rouge_l = 0
+    for input_data, pred in zip(input_data_lst, pred_lst):
+        input_data['output'] = pred
+        scores = rouge.compute(predictions=[minimum_normalization(pred)], references=[minimum_normalization(input_data['label'])], use_stemmer=True)
+        rouge_l_f1 = scores['rougeL']
+        input_data['rouge_l_f1'] = rouge_l_f1
+        total_rouge_l += rouge_l_f1
+        total += 1
+        output_lst.append(input_data)
+    
+    average_rouge_l = total_rouge_l / total
+    output_lst.append("Average ROUGE-L F1: {:.2f}%".format(average_rouge_l * 100))
+    print("CORD-19 Average ROUGE-L F1: {:.2f}%".format(average_rouge_l * 100))
+    score = average_rouge_l
+
 
 
 
