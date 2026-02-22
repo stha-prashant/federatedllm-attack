@@ -4,10 +4,11 @@
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
+#SBATCH --time=00-15:00:00
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
-#SBATCH --output=/shared/rc/llm-degredation/logs/log_%A.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/log_test.err
+#SBATCH --output=/scratch/ps9044/fedllm/log_%A.out
+#SBATCH --error=/scratch/ps9044/fedllm/log_test.err
 
 module purge
 conda activate fedllmold
@@ -15,14 +16,14 @@ conda activate fedllmold
 export HUGGINGFACE_HUB_TOKEN='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'
 
 
-max_steps=$steps
+max_steps=10
 num_rounds=30
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
 sample_clients=10
-lora_r=32
-lora_alpha=64   # twice of lora_r
+lora_r=128
+lora_alpha=256  # twice of lora_r
 lr=5e-5
 
 num_data_per_client=500
@@ -38,9 +39,19 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 # gpu=0
 
 
-benign_num_clients=(6)
+# benign_num_clients=(10)
+benign_num_clients=(7)
+
+
 # benign_dataset_names=('stanfordnlp/sst2')
-benign_dataset_names=($dataset)
+benign_dataset_names=("qiaojin/PubMedQA" "medQA" "emrqa" "cord19")
+# mixture_num_clients=10
+# mixture_num_clients=7
+
+# mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5 0.5)
+# mixture_benign_proportions=(1.0 1.0 1.0 1.0 0.5 0.5 0.5)
+
+
 # benign_dataset_names=('qiaojin/PubMedQA')
 
 # benign_dataset_names=('rajpurkar/squad_v2' 'qiaojin/PubMedQA')  # medQA, rajpurkar/squad_v2, stanfordnlp/sst2, qiaojin/PubMedQA
@@ -49,7 +60,7 @@ benign_dataset_names=($dataset)
 # malicious_num_clients=(3)
 # malicious_dataset_names=("lmsys/lmsys-chat-1m") # allenai/WildChat, lmsys/lmsys-chat-1m
 
-malicious_num_clients=(4)
+malicious_num_clients=(3)
 # malicious_dataset_names=('qiaojin/PubMedQA')
 
 # malicious_dataset_names=("MaliciousGen") # PKU-Alignment/BeaverTails, MaliciousGen
@@ -61,13 +72,15 @@ malicious_num_clients=(4)
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
 gpu=0
 
+
+
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
-output_dir='/shared/rc/llm-degredation/fedllm/barebones'
+output_dir='/scratch/ps9044/newsetting'
  
 # fed_alg="fedgraph"
-# fed_alg="safe_lora"
-fed_alg=$method
-
+# fed_alg="eval_filter"
+fed_alg=fedavg
+mixture_dirichlet_alpha=0.2
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
@@ -92,5 +105,8 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --safe_lora \
  --template "chat" \
+ --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
+#  --mixture_num_clients $mixture_num_clients \
+#  --mixture_benign_proportions ${mixture_benign_proportions[@]} \
 #  --safe_lora_original \
 #  --isa \

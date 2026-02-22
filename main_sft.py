@@ -1,5 +1,6 @@
 import copy
 import os
+import shutil
 from tqdm import tqdm
 import numpy as np
 import json
@@ -9,6 +10,7 @@ from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state
 import pickle
 from utils import *
 from federated_learning import *
+from federated_learning.fed_lora_classifier import Evaluation, FedLoRAClassifier
 from config import get_config, save_config, get_model_config, get_training_args
 import neptune
 import dataclasses
@@ -46,9 +48,51 @@ def compact_state_dict(sd: dict):
     return out
 
 
+def _to_short_name(full_name: str) -> str:
+    base = full_name.split('/')[-1]
+    mapping = {
+        'WildChat': 'WildChat',
+        'lmsys-chat-1m': 'lmsys-chat-1m',
+        'BeaverTails': 'BeaverTails',
+        'MaliciousGen': 'MaliciousGen',
+    }
+    return mapping.get(base, base)
+
+
+def _build_client_dataset_short_map(fed_args):
+    mapping = {}
+    total_benign = sum(fed_args.benign_num_clients) if fed_args.benign_num_clients else 0
+    benign_short = _to_short_name(fed_args.benign_dataset_names[0]) if fed_args.benign_dataset_names else 'benign'
+    for client_id in range(total_benign):
+        mapping[client_id] = benign_short
+
+    offset = total_benign
+    for ds_name, num_clients in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
+        ds_short = _to_short_name(ds_name)
+        for _ in range(num_clients):
+            mapping[offset] = ds_short
+            offset += 1
+    return mapping
+
+
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
+if fed_args.fed_alg == 'lora_classifier':
+    script_args.prefilter_enable = True
+    if str(getattr(script_args, 'prefilter_strategy', 'none')).lower() == 'none':
+        script_args.prefilter_strategy = 'step-level'
+
+prefilter_active = bool(getattr(script_args, 'prefilter_enable', False)) and str(getattr(script_args, 'prefilter_strategy', 'none')).lower() != 'none'
+
+if prefilter_active:
+    try:
+        clf = FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None))
+        print(f"[prefilter] LoRA classifier enabled (mode={clf.lora_mode}).")
+        print(f"[prefilter] threshold={script_args.prefilter_threshold}, strategy={script_args.prefilter_strategy}")
+    except Exception as e:
+        print(f"[warn] prefilter init failed: {e}")
+
 training_args = get_training_args(script_args, script_args.learning_rate)
 
 # ===== Define the tokenizer =====
@@ -61,11 +105,16 @@ if tokenizer.pad_token is None:
 #     dataset_list, num_client_list = get_sft_datasets_mixture(script_args, fed_args, tokenizer=tokenizer)    
 # else:
 #     dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
-if fed_args.mixture_num_clients > 0:
-    dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
-else:
-    dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
-print(dataset_list, num_client_list)
+alloc = None
+if getattr(script_args, 'prefilter_enable', False):
+    # if prefilter is enabled use old splitting
+    dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
+else:   
+    if fed_args.mixture_num_clients > 0:
+        dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
+    else:
+        dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
+    print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
 local_datasets = []
@@ -79,11 +128,13 @@ for dataset, num_client in zip(dataset_list, num_client_list):
     local_datasets.extend(splited_datasets)
     
 setattr(fed_args, 'num_clients', num_clients)
+script_args._prefilter_client_dataset_short_map = _build_client_dataset_short_map(fed_args)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
-with open(os.path.join(script_args.output_dir, 'dirichlet_alloc.json'), 'w') as f:
-    json.dump(alloc.tolist(), f, indent=4)
+if alloc is not None:
+    with open(os.path.join(script_args.output_dir, 'dirichlet_alloc.json'), 'w') as f:
+        json.dump(alloc.tolist(), f, indent=4)
 
 
 project_matrix = None
@@ -272,10 +323,26 @@ if script_args.load_in_8bit or script_args.load_in_4bit:
                 model, use_gradient_checkpointing=training_args.gradient_checkpointing
             )
 
+def set_lora_init_seed(seed: int = 2025):
+    import random as _random
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    _random.seed(seed)
+    np.random.seed(seed)
 if script_args.existing_lora is not None:
     model = PeftModel.from_pretrained(model, script_args.existing_lora+'/checkpoint-30', is_trainable=True)
 else:
+    set_lora_init_seed(script_args.seed)
     model = get_peft_model(model, peft_config)
+    i = 10
+    for name, param in model.named_parameters():
+        if 'lora' in name:
+            print(param.data.sum())
+        i = i-1
+        if i == 0:
+            break
+    # exit()
 model.print_trainable_parameters()
 
 
@@ -314,6 +381,7 @@ global_dict = copy.deepcopy(get_peft_model_state_dict(model))
 local_dict_list = [copy.deepcopy(global_dict) for i in range(fed_args.num_clients)]
 proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
 global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
+shadow_lora_base = copy.deepcopy(global_dict)
 
 
 
@@ -405,8 +473,9 @@ training_loss = [[] for i in range(fed_args.num_clients)]
 #         json.dump(output_lst, f, indent=4)
     
 
-for round in tqdm(range(fed_args.num_rounds)):
+prefilter_strategy = PrefilterStrategy(script_args, fed_args)
 
+for round in tqdm(range(fed_args.num_rounds)):
     clients_this_round = get_clients_this_round(fed_args, round)
 
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
@@ -421,6 +490,9 @@ for round in tqdm(range(fed_args.num_rounds)):
     }
     asr_rates = {}
     client_inferencess = {}
+    client_actual_samples = {}
+    strategy_name = str(getattr(script_args, 'prefilter_strategy', 'step-level')).lower()
+
     for client in range(fed_args.num_clients):
 
         if script_args.isa and client >= sum(fed_args.benign_num_clients):
@@ -458,6 +530,7 @@ for round in tqdm(range(fed_args.num_rounds)):
         set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
 
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
+        client_actual_samples[client] = len(sub_dataset)
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
         training_args = get_training_args(script_args, new_lr)
 
@@ -474,6 +547,10 @@ for round in tqdm(range(fed_args.num_rounds)):
             script_args=script_args,
             local_auxiliary=auxiliary_model_list[client],
             global_auxiliary=global_auxiliary,
+            current_round=round,
+            tracker_initial_state=None,
+            tracker_enabled=(getattr(script_args, 'prefilter_enable', False) and strategy_name != 'shadow-level'),
+            client_id=client,
         )
 
         results = trainer.train()
@@ -485,6 +562,34 @@ for round in tqdm(range(fed_args.num_rounds)):
             auxiliary_model_list[client], auxiliary_delta_dict[client] = trainer.get_auxiliary_param()
         else:
             local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
+
+        if getattr(script_args, 'prefilter_enable', False) and strategy_name == 'shadow-level':
+            try:
+                set_peft_model_state_dict(model, shadow_lora_base)
+                shadow_fixed_lr = 5e-5
+                shadow_training_args = get_training_args(script_args, shadow_fixed_lr)
+                shadow_trainer = get_fed_local_sft_trainer(
+                    script_args=script_args,
+                    fed_args=fed_args,
+                    model=model,
+                    tokenizer=tokenizer,
+                    training_args=shadow_training_args,
+                    local_dataset=sub_dataset,
+                    formatting_prompts_func=formatting_prompts_func_current,
+                    data_collator=data_collator_current,
+                    global_dict=shadow_lora_base,
+                    local_auxiliary=auxiliary_model_list[client],
+                    global_auxiliary=global_auxiliary,
+                    current_round=round,
+                    tracker_initial_state=shadow_lora_base,
+                    tracker_enabled=True,
+                    client_id=client,
+                )
+                _ = shadow_trainer.train()
+                if hasattr(shadow_trainer, 'delta_tracker'):
+                    _ = shadow_trainer.delta_tracker.get_processed_sample_ids()
+            except Exception as se:
+                print(f"[warn] Shadow-level training failed: {se}")
 
         # evaluate the model on advbench after local training to check safety drop
         if 'eval_filter' in fed_args.fed_alg:
@@ -505,6 +610,56 @@ for round in tqdm(range(fed_args.num_rounds)):
     # if fed_args.safe_lora:
     #     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
     #         json.dump(safe_lora_save_data, f)
+    filtered_clients_this_round = clients_this_round.copy()
+    client_harmful_mapping = {}
+    aggregation_sample_num_list = sample_num_list
+    skip_round = False
+
+    if prefilter_active:
+        try:
+            params_dir = os.path.join(script_args.output_dir, 'fed_lora_params', f'round_{round+1}')
+            clf_local = FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None))
+            client_harmful_mapping, eval_result = clf_local.get_harmful_mapping(
+                params_dir=params_dir,
+                clients_this_round=clients_this_round,
+                round_num=round,
+                fed_args=fed_args,
+                script_args=script_args,
+            )
+
+            try:
+                eval_engine = Evaluation(FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None)))
+                _, current_precision = eval_engine.evaluate(
+                    params_dir=params_dir,
+                    output_dir=script_args.output_dir,
+                    round_num=round,
+                    mode='prefilter',
+                    print_stats=False,
+                    existing_result=eval_result,
+                    threshold=getattr(script_args, 'prefilter_threshold', None),
+                )
+                print(f">> Round {round+1} Classifier Precision: {current_precision*100:.2f}%")
+                if os.path.exists(params_dir):
+                    shutil.rmtree(params_dir)
+            except Exception as e:
+                print(f"[warn] Failed to save prefilter classification results: {e}")
+
+            filtered_clients_this_round, client_effective_samples, skip_round = prefilter_strategy.compute(
+                round,
+                clients_this_round,
+                client_actual_samples,
+                client_harmful_mapping,
+                eval_result,
+            )
+            aggregation_sample_num_list = client_effective_samples
+
+        except Exception as e:
+            print(f"[warn] Prefilter failed, proceeding with normal weights: {e}")
+            client_effective_samples = {c: float(client_actual_samples.get(c, sample_num_list[c])) for c in clients_this_round}
+            filtered_clients_this_round = clients_this_round.copy()
+            aggregation_sample_num_list = client_effective_samples
+            skip_round = (sum(float(client_effective_samples[c]) for c in clients_this_round) == 0.0)
+
     # save everything
     if 'eval_filter' in fed_args.fed_alg:
         with open(os.path.join(script_args.output_dir, f"asr_rates_round_{round_idx}.json"), 'w') as f:
@@ -519,14 +674,31 @@ for round in tqdm(range(fed_args.num_rounds)):
             "local_dict_list": local_dict_list,
             "global_dict": compact_state_dict(global_dict),
             "fed_args": _to_plain_dict(fed_args),
-            "sample_num_list": sample_num_list,
+            "sample_num_list": aggregation_sample_num_list,
             "base_model_path": script_args.model_name_or_path
         }, f)
 
+    try:
+        for c in clients_this_round:
+            base_samples = client_actual_samples.get(c, sample_num_list[c])
+            eff = float(aggregation_sample_num_list[c] if isinstance(aggregation_sample_num_list, dict) else aggregation_sample_num_list[c])
+            w = (eff / float(base_samples)) if base_samples > 0 else 0.0
+            harm_cnt = len(client_harmful_mapping.get(c, []))
+            print(f"[prefilter] Client {c} has {harm_cnt} harmful steps | weight={w:.3f}")
+    except Exception as pe:
+        print(f"[warn] Printing client weights failed: {pe}")
+
+    if skip_round:
+        print(f">> Round {round+1} skipped. Global model unchanged.")
+        if (round + 1) % (1 if fed_args.num_rounds <= 30 else 10) == 0 or round + 1 == 10:
+            trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
+        continue
+
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
-        fed_args, global_dict, local_dict_list, sample_num_list, \
-        clients_this_round, round, proxy_dict=proxy_dict, \
+        fed_args, global_dict, local_dict_list, aggregation_sample_num_list, \
+        filtered_clients_this_round, round, proxy_dict=proxy_dict, \
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict),
         base_model_path=script_args.model_name_or_path,
         project_matrix=project_matrix,

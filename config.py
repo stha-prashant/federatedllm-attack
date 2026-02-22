@@ -82,6 +82,18 @@ class ScriptArguments:
 
     safe_lora_original: Optional[bool] = field(default=False, metadata={"help": "whether to use the original SafeLoRA to secure the aggregation"})
     safelora_cos_thrs: Optional[List[float]] = field(default=0.35, metadata={"help": "the cosine similarity threshold for SafeLoRA"})
+
+    prefilter_enable: Optional[bool] = field(default=False, metadata={"help": "Enable classifier prefilter/evaluation hooks"})
+    prefilter_classifier_path: Optional[str] = field(default=None, metadata={"help": "Path to lora classifier .pt"})
+    prefilter_gpu: Optional[int] = field(default=0, metadata={"help": "GPU id for classifier evaluation"})
+    prefilter_lora_mode: Optional[str] = field(default="delta", metadata={"help": "LoRA parameter mode for prefilter"})
+    prefilter_threshold: Optional[float] = field(default=0.8, metadata={"help": "Threshold for harmful detection"})
+    time_decay_factor: Optional[float] = field(default=0.95, metadata={"help": "Bayes time decay factor"})
+    prefilter_min_weight: Optional[float] = field(default=0.0, metadata={"help": "Minimum soft weight for clients"})
+    prefilter_log_mode: Optional[str] = field(default="json", metadata={"help": "Prefilter log mode: 'json' or 'ndjson'"})
+    prefilter_strategy: Optional[str] = field(default="none", metadata={"help": "Prefilter strategy: step-level, client-level, shadow-level, none"})
+    prefilter_round: Optional[int] = field(default=20, metadata={"help": "Apply dynamic prefiltering for first N rounds"})
+    prefilter_skip_avg_weight: Optional[float] = field(default=0.2, metadata={"help": "Skip aggregation when avg client weight is below threshold"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 

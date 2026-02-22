@@ -7,9 +7,9 @@ jobFile4="training_scripts/sbatch_test2.sh"
 
 # existing_lors=("/shared/rc/llm-degredation/fedllm/barebones/medQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251203103114" "/shared/rc/llm-degredation/fedllm/barebones/squad_v27_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105506" "/shared/rc/llm-degredation/fedllm/barebones/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105050")
 
-for method in  "krum" "fedgraph" "safe_lora" "fedavg" 
+for alpha in 0.1 0.2
 do
-    for alpha in 0.5 0.2
+    for method in   "fedavg"
     do
         export method;
         export alpha;
@@ -19,7 +19,7 @@ done
 
 
 # for method in "fedgraph"
-# do
+# dohtt
 #     for dataset in "rajpurkar/squad_v2" 
 #     do
 #         for steps in 10

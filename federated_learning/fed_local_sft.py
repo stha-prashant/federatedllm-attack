@@ -1,12 +1,105 @@
 import torch
 import copy
+import os
 from trl import SFTTrainer
 from transformers import TrainerCallback
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
-ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum']
 
-def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary):
+ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum', 'lora_classifier']
+
+
+class DeltaTracker(TrainerCallback):
+    def __init__(self, initial_state, dataset, script_args, round_num, output_dir, client_id, max_steps=None):
+        super().__init__()
+        self.initial_state = copy.deepcopy(initial_state) if initial_state is not None else None
+        self.dataset = dataset
+        self.script_args = script_args
+        self.round_num = round_num
+        self.output_dir = output_dir
+        self.client_id = client_id
+        self.current_sample_idx = 0
+        self.max_steps = max_steps
+        self.current_step = 0
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if not getattr(self.script_args, 'prefilter_enable', False):
+            return control
+
+        self.current_step += 1
+
+        try:
+            model = kwargs['model']
+            current_state = copy.deepcopy(get_peft_model_state_dict(model))
+            batch_size = args.per_device_train_batch_size
+            batch_start = self.current_sample_idx
+            batch_end = min(batch_start + batch_size, len(self.dataset))
+
+            from federated_learning.fed_lora_classifier import DeltaSaver, FedLoRAClassifier
+            save_path = os.path.join(self.output_dir, f"fed_lora_params/round_{self.round_num + 1}")
+
+            strategy_name = str(getattr(self.script_args, 'prefilter_strategy', 'step-level')).lower()
+            step_last = int(getattr(state, 'max_steps', self.max_steps) or self.current_step)
+            save_this_step = (strategy_name != 'client-level') or (self.current_step == step_last)
+
+            if batch_start < len(self.dataset) and save_this_step:
+                ex = self.dataset[batch_start]
+                ds_short = ex.get('dataset_name', None)
+                sid = ex.get('sample_id', None)
+
+                if ds_short is None:
+                    dataset_map = getattr(self.script_args, '_prefilter_client_dataset_short_map', {})
+                    ds_short = dataset_map.get(int(self.client_id), 'unknown')
+                if sid is None:
+                    sid = int(self.current_step)
+
+                base_state = self.initial_state
+                # FedLoRAClassifier.instance(getattr(self.script_args, 'prefilter_classifier_path', None)).save_delta(current_state, base_state, ds_short, int(self.current_step), save_path, int(self.client_id))
+
+                DeltaSaver('first_layer_B_only').save(
+                    current_state,
+                    base_state,
+                    str(ds_short),
+                    int(self.current_step),
+                    save_path,
+                    int(self.client_id),
+                )
+
+
+            self.current_sample_idx = batch_end
+            del current_state
+            return control
+
+        except Exception as e:
+            print(f"[ERROR] Failed to save LoRA delta parameters at step {self.current_step}: {e}")
+            return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if hasattr(self, 'initial_state'):
+            try:
+                delattr(self, 'initial_state')
+            except Exception:
+                pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return control
+
+    def get_processed_sample_ids(self):
+        return {}
+
+def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary, current_round=0, tracker_initial_state=None, tracker_enabled=True, client_id=None):
+    delta_tracker = None
+    if getattr(script_args, 'prefilter_enable', False) and tracker_enabled:
+        max_steps = getattr(training_args, 'max_steps', None)
+        delta_tracker = DeltaTracker(
+            initial_state=(tracker_initial_state if tracker_initial_state is not None else global_dict),
+            dataset=local_dataset,
+            script_args=script_args,
+            round_num=current_round,
+            output_dir=script_args.output_dir,
+            client_id=client_id,
+            max_steps=max_steps,
+        )
     
     if fed_args.fed_alg == 'fedprox':
         trainer = SFTTrainerFedProx(
@@ -34,6 +127,8 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
             global_auxiliary=global_auxiliary,
         )
         trainer.add_callback(SCAFFOLD_Callback(trainer.correction, model))
+        if delta_tracker:
+            trainer.add_callback(delta_tracker)
     elif (fed_args.fed_alg in ALGS_NORMAL_TRAINING) or (fed_args.fed_alg).startswith('local'):
         if formatting_prompts_func is None:
             trainer = SFTTrainer(
@@ -45,6 +140,8 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
                 train_dataset=local_dataset,
                 data_collator=data_collator,
             )
+            if delta_tracker:
+                trainer.add_callback(delta_tracker)
         else:
             trainer = SFTTrainer(
                 model=model,
@@ -55,8 +152,13 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
                 formatting_func=formatting_prompts_func,
                 data_collator=data_collator,
             )
+            if delta_tracker:
+                trainer.add_callback(delta_tracker)
     else:
         raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
+
+    if delta_tracker:
+        trainer.delta_tracker = delta_tracker
     return trainer
 
 class SFTTrainerFedProx(SFTTrainer):

@@ -279,6 +279,7 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
         
         benign_total_counts = [len(ds) for ds in benign_client_datasets]
         benign_to_keep = [int(ps[i] * benign_total_counts[i]) for i in range(N)]
+        # malicious_total = [0 for i in range(N)]
         malicious_total = [benign_total_counts[i] - benign_to_keep[i] for i in range(N)]
 
         malicious_name = fed_args.malicious_dataset_names[0]

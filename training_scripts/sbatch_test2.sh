@@ -20,12 +20,12 @@ num_rounds=30
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
-sample_clients=10
+sample_clients=7
 lora_r=32
 lora_alpha=64   # twice of lora_r
 lr=5e-5
 
-num_data_per_client=500
+num_data_per_client=200
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
 local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
@@ -38,12 +38,18 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 # gpu=0
 
 
+# benign_num_clients=(10)
 benign_num_clients=(7)
+
 
 # benign_dataset_names=('stanfordnlp/sst2')
 benign_dataset_names=("qiaojin/PubMedQA" "medQA" "emrqa" "cord19")
 # mixture_num_clients=10
-# mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5)
+mixture_num_clients=7
+
+# mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5 0.5)
+mixture_benign_proportions=(1.0 1.0 1.0 1.0 0.5 0.5 0.5)
+
 
 # benign_dataset_names=('qiaojin/PubMedQA')
 
@@ -66,7 +72,6 @@ malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTail
 gpu=0
 
 
-malicious_num_clients=(3)
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/scratch/ps9044/newsetting'
@@ -99,8 +104,8 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --safe_lora \
  --template "chat" \
+ --mixture_num_clients $mixture_num_clients \
+ --mixture_benign_proportions ${mixture_benign_proportions[@]} \
  --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
-#  --mixture_num_clients $mixture_num_clients \
-#  --mixture_benign_proportions ${mixture_benign_proportions[@]} \
 #  --safe_lora_original \
 #  --isa \
