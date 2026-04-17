@@ -53,7 +53,7 @@ def judge_advbench(checkpoint_dir: Path, ds: str):
     model_answer = get_model_answer_name(checkpoint_dir, ds)
     cmd = (
         f"python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_judge_advbench.py "
-        f"--judger rule --model_answer {model_answer} --bench_name {ds} --round {checkpoint_int} --neptune_id NO_NEPTUNE"
+        f"--judger rule --model_answer {model_answer} --bench_name {ds} --round {checkpoint_int} --wandb_id NO_WANDB"
     )
     print("[JUDGE]", cmd)
     os.system(cmd)

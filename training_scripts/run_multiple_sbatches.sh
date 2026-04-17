@@ -7,15 +7,161 @@ jobFile4="training_scripts/sbatch_test2.sh"
 
 # existing_lors=("/shared/rc/llm-degredation/fedllm/barebones/medQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251203103114" "/shared/rc/llm-degredation/fedllm/barebones/squad_v27_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105506" "/shared/rc/llm-degredation/fedllm/barebones/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105050")
 
-for alpha in 0.1 0.2
+# for alpha in 0.2
+# do
+#     for method in "krum" "foolsgold" "safe_lora"
+#     do
+#         export method;
+#         export alpha;
+#         sbatch -t 00-10:00:00 $jobFile1;
+#     done
+# done
+
+
+# for alpha in 0.2
+# do
+#     for method in "foolsgold"
+#     do
+#         export method;
+#         export alpha;
+#         sbatch -t 00-10:00:00 $jobFile4;
+#     done
+# done
+# for method in "fedavg" "safe_lora"
+# for method in "fedavg" "safe_lora" 
+# # for method in "safe_lora_mixture_analytical_different_old"
+# do
+#     for alpha in 0.2
+#     do
+#         for throw_n in 0
+#         do
+#             for seed in 2023 4096
+#             do
+#                 for analytical_alpha in 1.0
+#                 do
+#                     export method;
+#                     export alpha;
+#                     export seed;
+#                     export throw_n;
+#                     export analytical_alpha;
+#                     sbatch -t 00-11:00:00 $jobFile4;
+#                     # sbatch -t 00-11:00:00 $jobFile1;
+#                 done
+#             done
+#         done
+#     done
+# done
+
+# for method in "fedavg" "safe_lora" 
+# # for method in "safe_lora_mixture_analytical_different_old"
+# do
+#     for alpha in 0.2
+#     do
+#         for throw_n in 0
+#         do
+#             for seed in 2023
+#             do
+#                 for analytical_alpha in 1.0
+#                 do
+#                     export method;
+#                     export alpha;
+#                     export seed;
+#                     export throw_n;
+#                     export analytical_alpha;
+#                     # sbatch -t 00-11:00:00 $jobFile4;
+#                     sbatch -t 00-11:00:00 $jobFile1;
+#                 done
+#             done
+#         done
+#     done
+# done
+
+for method in "safe_lora" 
+# for method in "safe_lora_mixture_analytical_different_old"
 do
-    for method in   "fedavg"
+    for alpha in 0.2
     do
-        export method;
-        export alpha;
-        sbatch -t 00-10:00:00 $jobFile4;
+        for throw_n in 0
+        do
+            for seed in 2023
+            do
+                for analytical_alpha in 1.0
+                do
+                    export method;
+                    export alpha;
+                    export seed;
+                    export throw_n;
+                    export analytical_alpha;
+                    # sbatch -t 00-11:00:00 $jobFile4;
+                    sbatch -t 00-11:00:00 $jobFile1;
+                done
+            done
+        done
     done
 done
+
+
+
+
+# for method in "safe_lora_mixture_safety_subspace"
+# # for method in "safe_lora_mixture_analytical_different_old"
+# do
+#     for alpha in 0.2
+#     do
+#         for throw_n in 0
+#         do
+#             for seed in 2023
+#             do
+#                 for analytical_alpha in 1.0
+#                 do
+#                     export method;
+#                     export alpha;
+#                     export seed;
+#                     export throw_n;
+#                     export analytical_alpha;
+#                     sbatch -t 00-15:00:00 $jobFile4;
+#                 done
+#             done
+#         done
+#     done
+# done
+# for method in "debug_thrown"
+# do
+#     for alpha in 0.2
+#     do
+#         for throw_n in 4
+#         do
+#             for seed in 4096
+#             do
+#                 for analytical_alpha in 1.0
+#                 do
+#                     export method;
+#                     export alpha;
+#                     export seed;
+#                     export throw_n;
+#                     export analytical_alpha;
+#                     sbatch -t 00-10:00:00 $jobFile4;
+#                 done
+#             done
+#         done
+#     done
+# done
+
+# for alpha in 0.2
+# do
+#     for analytical_alpha in 1.0
+#     do
+#         for method in  "safe_lora_mixture" 
+#         do
+#             export method;
+#             export alpha;
+#             export analytical_alpha;
+#             sbatch -t 00-10:00:00 $jobFile4;
+#         done
+#     done
+# done
+
+
 
 
 # for method in "fedgraph"

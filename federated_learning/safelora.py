@@ -216,11 +216,11 @@ def projected_weighted(peft_model, project_matrix):
         if 'lora' in name:
 
             # Identify the rank-r weight (LoRA B matrix)
-            if param.shape[0] == 32:
+            if param.shape[0] < 100: 
                 B = param.clone()  # use clone instead of deepcopy for safety
                 continue
             
-            if param.shape[0] != 32:
+            if param.shape[0] > 100:
                 # Skip if B is not yet initialized
                 if B is None:
                     raise ValueError(f"LoRA B matrix not found before layer {name}. Check peft_config.r.")
@@ -239,7 +239,7 @@ def projected_weighted(peft_model, project_matrix):
                 idx += 1
 
                 # S-layer term: 1 / (1 + ||CΔW - ΔW||_2). Use Frobenius norm for matrices.
-                diff = fW - ori
+                # diff = fW - ori
                 # Frobenius norm == l2 over all entries
 
                 
@@ -329,7 +329,7 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     for client in clients_this_round:
         local_dict = deepcopy(local_dict_list[client])
         safe_lora_data[client] = projected_weighted(local_dict, project_matrix)
-        
+    
     
     S_total = {client: safe_lora_data[client]['S_total'] for client in clients_this_round}
     S_values = np.array([S_total[c] for c in clients_this_round], dtype=float).reshape(-1, 1)
@@ -352,12 +352,13 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
 
     if len(selected_clients) == 0:
         # select the top half clients if all are detected as malicious
-        sorted_clients = sorted(
-            zip(clients_this_round, probs), 
-            key=lambda x: x[1], 
-            reverse=True
-        )
-        selected_clients = [client for client, _ in sorted_clients[: max(1, n_clients // 2)]]
+        # sorted_clients = sorted(
+        #     zip(clients_this_round, probs), 
+        #     key=lambda x: x[1], 
+        #     reverse=True
+        # )
+        # selected_clients = [client for client, _ in sorted_clients[: max(1, n_clients // 2)]]
+        assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
         print("All clients were detected as malicious by SafeLoRA aggregation, defaulting to using top half clients as benign")
         # assert 1 == 0, "All clients are detected as malicious by SafeLoRA aggregation."
 
@@ -366,6 +367,8 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     sample_this_round = sum([sample_num_list[client] for client in selected_clients])
     for key in global_dict.keys():
         global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in selected_clients])
+        # average instead
+        # global_dict[key] = sum([local_dict_list[client][key] for client in selected_clients]) / len(selected_clients)
                 
     
 

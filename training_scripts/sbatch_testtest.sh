@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
-#SBATCH --output=/scratch/ps9044/fedllm/log_testx.out
-#SBATCH --error=/scratch/ps9044/fedllm/log_testx.err
+#SBATCH --output=/scratch/ps9044/fedllm/log_test.out
+#SBATCH --error=/scratch/ps9044/fedllm/log_test.err
 
 # module purge
 # conda activate fedllmold
@@ -68,23 +68,18 @@ malicious_num_clients=(3)
 # malicious_dataset_names=("_") # PKU-Alignment/BeaverTails, MaliciousGen
 # malicious_dataset_names=("stanfordnlp/sst2") # PKU-Alignment/BeaverTails, MaliciousGen
 
-malicious_dataset_names=("PKU-Alignment/BeaverTails") # 
-# malicious_dataset_names=("expguardtrain") # PKU-Alignment/BeaverTails, MaliciousGen
-# PKU-Alignment/BeaverTails, MaliciousGen
+malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
 gpu=0
 
 
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
-output_dir='/scratch/ps9044_copy/newsetting'
+output_dir='/scratch/ps9044/newsetting'
  
 # fed_alg="fedgraph"
 # fed_alg="eval_filter"
-fed_alg="safe_lora"
-mixture_dirichlet_alpha="0.2"
-seed=2023
-analytical_alpha=0.2
-throw_n=0
+fed_alg=fedavg
+# mixture_dirichlet_alpha=$alpha
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
@@ -111,10 +106,8 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --template "chat" \
  --mixture_num_clients $mixture_num_clients \
  --mixture_benign_proportions ${mixture_benign_proportions[@]} \
- --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
- --analytical_alpha $analytical_alpha \
- --seed $seed \
- --throw_n $throw_n \
-
+ --mixture_dirichlet_alpha 0.2 \
+ --analytical_alpha 1.0 \
+ --seed 4096 \
 #  --safe_lora_original \
 #  --isa \

@@ -3,76 +3,8 @@ from pathlib import Path
 import os, json, math, re, shutil, itertools, time
 import torch
 from typing import List, Dict, Any
+from wandb_utils import resolve_one_run
 
-
-NEPTUNE_PROJECT = os.environ.get("NEPTUNE_PROJECT", "fedllm/fedllm")
-import neptune
-token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ=='
-
-def resolve_one_run(run_id: str, args=None):
-    print("here")
-    RUNS_TO_PROCESS = []
-    run = neptune.init_run(project=NEPTUNE_PROJECT, with_id=run_id, api_token=token, mode="read-only")
-    print("done")
-    resolved = None
-    for field in [
-        "parameters/total_output_dir",
-        "parameters/script_args/output_dir",
-    ]:
-        try:
-            v = run[field].fetch()
-            if isinstance(v, str) and v:
-                resolved = v
-                break
-        except Exception:
-            pass
-    try:
-        model_name_or_path = run["parameters/script_args/model_name_or_path"].fetch()
-        num_rounds = run['parameters/fed_args/num_rounds'].fetch()
-        sample_clients = run['parameters/fed_args/sample_clients'].fetch()
-        template = run['parameters/script_args/template'].fetch()
-        
-    except Exception:
-        model_name_or_path = None
-
-    if args.safe_lora_original:
-        safelora_original_saved_path = run['parameters/safelora_original_saved_path'].fetch()
-    else:
-        safelora_original_saved_path = None
-
-    
-
-    # Fallback: best-effort local guess by run id name
-    if not resolved:
-        from pathlib import Path
-        def _guess_dir_from_run_id(rid: str) -> str | None:
-            candidates = [Path("./outputs"), Path(".")]
-            for root in candidates:
-                if (root / rid).is_dir() and (root / rid / "lora_updates").is_dir():
-                    return str(root / rid)
-                for p in root.glob(f"**/{rid}"):
-                    if p.is_dir() and (p / "lora_updates").is_dir():
-                        return str(p)
-            return None
-        guess = _guess_dir_from_run_id(run_id)
-        if guess:
-            resolved = guess
-            print(f"[Neptune] Guessed BASE_OUTPUT_DIR for {run_id}: {resolved}")
-    print(resolved, model_name_or_path, num_rounds, sample_clients)
-    # if resolved:
-    run_data = {
-        "run_id": run_id,
-        "base_output_dir": resolved,
-        "model_name_or_path": model_name_or_path,
-        "num_rounds": num_rounds,
-        "sample_clients": sample_clients,
-        "template": template,
-        "safelora_original_saved_path": safelora_original_saved_path,
-    }
-    # else:
-    #     print(f"[WARN] Could not resolve output_dir for run {run_id}; skipping.")
-    # run.stop()
-    return run_data
 
 from pathlib import Path
 
@@ -84,7 +16,7 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
         return []
     checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
     # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
-    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
+    checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
     # checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' not in str(p.name) and 'base' in str(p.name)]
     # remove common ones between two lists to avoid duplicates
     checkpoint_dirs = list(set(checkpoint_dirs))
@@ -202,7 +134,7 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
 
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --neptune_id {item["run_id"]}'
+            command = f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --wandb_id {item["run_id"]}'
             print("Judging run id ", item["run_id"], "ds: ", ds)
             os.system(command)
 
@@ -223,7 +155,7 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
                 # if True:
                     checkpoint_int = checkpoint_dir.name.split('-')[-1]
                     print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --neptune_id {item["run_id"]}')
+                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]}')
                     print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy
@@ -284,14 +216,14 @@ if __name__ == "__main__":
     parser.add_argument('--datasets', type=str, nargs='+', default=['advbench', ], help='List of datasets to evaluate')
     parser.add_argument('--eval_list', type=str, nargs='+', default=['30'], help='List of checkpoint ids to evaluate')
     parser.add_argument('--gpus', type=int, nargs='+', default=[0], help='List of GPU ids to use for generation')
-    parser.add_argument('--run_ids', type=int, nargs='+', default=None, help='List of Neptune run ids to process')
+    parser.add_argument('--run_ids', type=str, nargs='+', default=None, help='List of W&B run ids or run paths to process')
     parser.add_argument('--safe_lora_original', action='store_true', help='different paths according to this flag')
     args = parser.parse_args()
 
     # extract info from run_ids
-    NEPTUNE_RUN_IDS = [f'FED-{x}' for x in args.run_ids]
+    WANDB_RUN_IDS = [str(x) for x in args.run_ids]
     RUNS_TO_PROCESS = []
-    for rid in NEPTUNE_RUN_IDS:
+    for rid in WANDB_RUN_IDS:
         RUNS_TO_PROCESS.append(resolve_one_run(rid, args=args))
 
 
@@ -299,13 +231,13 @@ if __name__ == "__main__":
         current_eval_list = [eval_item]
 
     
-        # # merge checkpoints
-        # merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
-        # print("Merged checkpoint-------------------------------------------------\n\n")
-        # # for each dataset, generate
-        # for ds in args.datasets:
-        #     generate_all_responses(RUNS_TO_PROCESS, ds=ds, gpus=args.gpus, eval_list=current_eval_list, args=args)
-        # print("Generated responses -------------------------------------------------\n\n")
+        # merge checkpoints
+        merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+        print("Merged checkpoint-------------------------------------------------\n\n")
+        # for each dataset, generate
+        for ds in args.datasets:
+            generate_all_responses(RUNS_TO_PROCESS, ds=ds, gpus=args.gpus, eval_list=current_eval_list, args=args)
+        print("Generated responses -------------------------------------------------\n\n")
 
         # # for each dataset, judge
         for ds in args.datasets:
@@ -316,18 +248,18 @@ if __name__ == "__main__":
                 judge_all_responses(RUNS_TO_PROCESS, ds=ds, eval_list=current_eval_list, args=args)
 
         
-        # # show results
-        # # delete merged full models to save space
-        # for item in RUNS_TO_PROCESS:
-        #     if args.safe_lora_original:
-        #         shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
-        #     else:
-        #         checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
-        #         for checkpoint_dir in checkpoint_dirs:
-        #             if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
-        #                 full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
-        #                 print("Deleting full model at: ", full_model_path)
-        #                 shutil.rmtree(full_model_path, ignore_errors=True)
+        # show results
+        # delete merged full models to save space
+        for item in RUNS_TO_PROCESS:
+            if args.safe_lora_original:
+                shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
+            else:
+                checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
+                for checkpoint_dir in checkpoint_dirs:
+                    if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
+                        full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
+                        print("Deleting full model at: ", full_model_path)
+                        shutil.rmtree(full_model_path, ignore_errors=True)
 
     
 

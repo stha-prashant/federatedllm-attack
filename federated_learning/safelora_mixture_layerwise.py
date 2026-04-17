@@ -1,0 +1,254 @@
+import os, json
+import numpy as np
+import torch
+from collections import OrderedDict
+from sklearn.mixture import GaussianMixture
+
+
+def projected_fw_normsum(delta_sd, project_matrix, rank=32):
+    """
+    Compute N_proj = sum_i || (C_i @ dB_i) @ dA_i ||_F
+    using the same sequential ordering assumption as your current code (idx increments on each LoRA-B).
+    """
+    idx = 0
+    A = None
+    norms = []
+
+    for name, param in delta_sd.items():
+        if "lora" not in name:
+            continue
+        if not torch.is_tensor(param) or param.ndim != 2:
+            continue
+
+        # Heuristic: LoRA A has shape (r, in) => shape[0] == rank
+        if param.shape[0] == rank:
+            A = param
+            continue
+
+        # LoRA B: (out, r)
+        if A is None:
+            # fallback: try to find matching A by key name
+            a_name = name.replace("lora_B", "lora_A")-6
+            if a_name in delta_sd and torch.is_tensor(delta_sd[a_name]) and delta_sd[a_name].ndim == 2:
+                A = delta_sd[a_name]
+            else:
+                raise ValueError(f"LoRA A not found before {name} (and fallback lookup failed).")
+
+        C = project_matrix[idx].to(param.device)  # (out, out) assumed
+        fW = torch.mm(torch.mm(C, param), A)      # (out, in)
+        norms.append(float(torch.norm(fW, p="fro").item()))
+
+        idx += 1
+        A = None
+
+    N_proj = float(np.sum(norms)) if norms else 0.0
+    return {"N_proj": float(np.round(N_proj, 8)), "per_layer_norms": norms}
+
+
+def apply_projected_rescale_keep_residual(delta_sd, project_matrix, s=None, layer_scales=None, rank=32):
+    """
+    Modify ONLY LoRA-B deltas so that the projected component scales by s while (I-C) component stays unchanged:
+        dB <- dB + (s-1) * (C @ dB)
+    LoRA-A deltas are unchanged.
+
+    Supports either:
+      - scalar `s` for all LoRA-B layers, or
+      - `layer_scales` (list/tuple) for per-layer scaling.
+
+    IMPORTANT: This relies on the same idx ordering: increment idx on each LoRA-B encountered.
+    """
+    if layer_scales is None and (s is None or s == 1.0):
+        return delta_sd
+
+    idx = 0
+    out = OrderedDict()
+
+    for name, param in delta_sd.items():
+        if "lora" not in name or (not torch.is_tensor(param)) or param.ndim != 2:
+            out[name] = param
+            continue
+
+        # LoRA A: unchanged
+        if param.shape[0] == rank:
+            out[name] = param
+            continue
+
+        # LoRA B: adjust only projected part
+        if layer_scales is not None:
+            s_layer = float(layer_scales[idx])
+        else:
+            s_layer = float(s)
+
+        if s_layer == 1.0:
+            out[name] = param
+        else:
+            C = project_matrix[idx].to(param.device)
+            out[name] = param + (s_layer - 1.0) * torch.mm(C, param)
+
+        idx += 1
+
+    return out
+
+
+def aggr(
+    global_dict,
+    local_dict_list,
+    sample_num_list,
+    clients_this_round,
+    round_idx,
+    fed_args,
+    proxy_dict=None,
+    output_dir=None,
+    project_matrix=None,
+    script_args=None,
+):
+    """
+    1) For each client, form delta = local - global (OrderedDict in local key order).
+    2) Compute N_proj = sum || (C dB) dA ||_F.
+    3) Fit 2-component GMM on log(N_proj + eps). Benign = smaller mean (smaller magnitude).
+    4) Select benign clients with p_benign >= threshold (fallback: top half).
+    5) Target magnitude: mean/median of N_proj among benign.
+     6) Identify the highest-p_benign client as layerwise reference.
+         For each client & layer:
+            - if client is globally benign OR layer norm <= reference layer norm: keep unchanged (s_layer=1)
+            - else: shrink projected part with s_layer=min(1, ref_layer_norm / client_layer_norm)
+         Apply ONLY to LoRA-B via: dB <- dB + (s_layer-1) (C dB). (A unchanged)
+         => scales projected part, keeps (I-C) part unchanged (if C is a projector).
+    7) Aggregate all clients with FedAvg of *rescaled* deltas: global += sum w_i * delta_i_rescaled
+    """
+    assert project_matrix is not None, "project_matrix is required"
+
+    rank = getattr(fed_args, "lora_r", 32)
+    prob_threshold = getattr(fed_args, "safelora_gmm_threshold", 0.8)
+    seed = getattr(fed_args, "seed", 0)
+    eps = getattr(fed_args, "safelora_eps", 1e-12)
+    use_median = getattr(fed_args, "safelora_target_median", False)
+
+    # 1) deltas + N_proj
+    delta_dicts = {}
+    stats = {}
+    logx = []
+
+    for c in clients_this_round:
+        local_sd = local_dict_list[c]
+        # delta_sd = OrderedDict(
+        #     (k, local_sd[k] - global_dict[k]) for k in local_sd.keys() if k in global_dict
+        # )
+        # delta_dicts[c] = delta_sd
+
+        delta_dicts[c] = local_sd
+        
+
+        st = projected_fw_normsum(local_sd, project_matrix, rank=rank)
+        stats[c] = st
+        logx.append(np.log(st["N_proj"] + eps))
+
+    X = np.array(logx, dtype=float).reshape(-1, 1)
+
+    # 2) GMM on log(N_proj)
+    gmm = GaussianMixture(n_components=2, covariance_type="full", random_state=seed)
+    gmm.fit(X)
+    means = gmm.means_.flatten()
+
+    benign_comp = int(np.argmin(means))  # smaller projected magnitude => benign
+    p_benign = gmm.predict_proba(X)[:, benign_comp]
+
+    selected = [c for c, p in zip(clients_this_round, p_benign) if p >= prob_threshold]
+    if len(selected) == 0:
+        order = sorted(zip(clients_this_round, p_benign), key=lambda x: x[1], reverse=True)
+        selected = [c for c, _ in order[: max(1, len(clients_this_round)//2)]]
+
+    # selected = [0, 1, 2, 3]
+    benign_vals = [stats[c]["N_proj"] for c in selected]
+    N_target = float(np.median(benign_vals) if use_median else np.mean(benign_vals))
+
+    # 3) layerwise scales from highest-p_benign client + apply residual-preserving projected shrink on B only
+    ref_idx = int(np.argmax(p_benign))
+    ref_client = clients_this_round[ref_idx]
+    ref_layer_norms = stats[ref_client]["per_layer_norms"]
+
+    scales = {}
+    layer_scales = {}
+    layer_is_malicious = {}
+    rescaled_deltas = {}
+
+    for c in clients_this_round:
+        Np = stats[c]["N_proj"]
+        if c in selected or Np <= 0.0:
+            s = 1.0
+        else:
+            s = float(min(1.0, max(0.0, N_target / Np)))
+        scales[c] = s
+
+        client_layer_norms = stats[c]["per_layer_norms"]
+        if len(client_layer_norms) != len(ref_layer_norms):
+            raise ValueError(
+                f"Per-layer norm length mismatch for client {c}: "
+                f"{len(client_layer_norms)} vs ref {len(ref_layer_norms)}"
+            )
+
+        c_layer_scales = []
+        c_layer_malicious = []
+        for n_c, n_ref in zip(client_layer_norms, ref_layer_norms):
+            if c in selected:
+                is_mal = False
+                s_layer = 1.0
+            else:
+                is_mal = bool(n_c > n_ref)
+                if (not is_mal) or n_c <= 0.0:
+                    s_layer = 1.0
+                else:
+                    # s_layer = float(min(1.0, max(0.0, n_ref / n_c)))
+                    s_layer = float(n_ref/n_c)
+            c_layer_malicious.append(is_mal)
+            c_layer_scales.append(s_layer)
+
+        layer_scales[c] = c_layer_scales
+        layer_is_malicious[c] = c_layer_malicious
+
+        rescaled_deltas[c] = apply_projected_rescale_keep_residual(
+            delta_dicts[c], project_matrix, layer_scales=c_layer_scales, rank=rank
+        )
+
+    # 4) aggregate ALL clients (FedAvg of rescaled deltas)
+    sample_sum = sum(sample_num_list[c] for c in clients_this_round)
+
+    for key in global_dict.keys():
+        global_dict[key] = sum([rescaled_deltas[client][key] * sample_num_list[client] / sample_sum for client in clients_this_round])
+        # agg = None
+        # for c in clients_this_round:
+        #     if k not in rescaled_deltas[c]:
+        #         continue
+        #     w = sample_num_list[c] / sample_sum
+        #     contrib = rescaled_deltas[c][k] * w
+        #     agg = contrib if agg is None else (agg + contrib)
+
+        # if agg is not None:
+        #     global_dict[k] = global_dict[k] + agg
+
+    # 5) logging
+    if script_args is not None:
+        out_dir = os.path.join(script_args.output_dir, "safelora_rescale_projected_keep_residual")
+        os.makedirs(out_dir, exist_ok=True)
+
+        log = {
+            "round_idx": round_idx,
+            "clients": clients_this_round,
+            "N_proj": {str(c): stats[c]["N_proj"] for c in clients_this_round},
+            "logN_proj": {str(c): float(np.log(stats[c]["N_proj"] + eps)) for c in clients_this_round},
+            "gmm_means_logN_proj": means.tolist(),
+            "benign_component": benign_comp,
+            "p_benign": {str(c): float(p) for c, p in zip(clients_this_round, p_benign)},
+            "threshold": prob_threshold,
+            "selected_clients": selected,
+            "reference_client_highest_p_benign": ref_client,
+            "N_target": N_target,
+            "target_is_median": bool(use_median),
+            "scales": {str(c): float(scales[c]) for c in clients_this_round},
+            "layer_scales": {str(c): [float(v) for v in layer_scales[c]] for c in clients_this_round},
+            "layer_is_malicious": {str(c): [bool(v) for v in layer_is_malicious[c]] for c in clients_this_round},
+        }
+        with open(os.path.join(out_dir, f"round_{round_idx}.json"), "w") as f:
+            json.dump(log, f, indent=2)
+
+    return global_dict

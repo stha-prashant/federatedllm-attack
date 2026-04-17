@@ -75,6 +75,8 @@ def dirichlet_split_by_label(ds_all, num_clients, alpha, per_client=None, seed=2
     else:
         # simpler case: just get dirichlet proportions for eacch label for all clients
         while True:
+            print("========================Trying======================================")
+            alloc = np.zeros((num_clients, K), dtype=int)
             client_indices = [[] for _ in range(num_clients)]
             for i in range(K):
                 p = rng.dirichlet([alpha] * num_clients)
@@ -249,6 +251,7 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
     return_dataset_list  = [return_dataset_list]
 
     print(alloc)
+    # exit()
 
     if not malicious_mixture:
         for malicious_dataset_name, malicious_num_clients in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
@@ -360,6 +363,11 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         dataset = load_dataset(dataset_name, split='train')
     elif dataset_name == 'rajpurkar/squad_v2':
         dataset = load_dataset(dataset_name, split='train')
+    elif dataset_name == 'expguardtrain':
+        dataset = datasets.load_dataset('6rightjade/expguardmix', data_files='expguardtrain.parquet')['train']
+        dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
+        dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+
     elif dataset_name == 'qiaojin/PubMedQA':
         PQA_A_URL = "https://huggingface.co/datasets/pubmed_qa/resolve/607a104f8f2bdc1db8e9515d325a83c6aa35d4c1/data/ori_pqaa.json"
 
@@ -586,7 +594,12 @@ Question: {example["question"]}"""
             return example
         dataset = dataset.map(cord19_format, remove_columns=['input', 'output'], desc=f"Preprocessing {dataset_name} for unified format.")
 
-    
+    elif dataset_name == 'expguardtrain':
+        def expguard_format(example):
+            example['instruction'] = example['prompt']
+            return example
+        dataset = dataset.map(expguard_format, remove_columns=['domain', 'prompt_label', 'prompt'], desc=f"Preprocessing {dataset_name} for unified format.")
+        
     elif dataset_name in ['triviaqa']:
         def triviaqa_format(example):
             example['instruction'] = f"Answer the following trivia question based on your knowledge.\n\nQuestion: {example['Question']}"
@@ -627,7 +640,7 @@ Question: {example["question"]}"""
         def _to_chat_format(example):
             # Try to get a system prompt from the conversation template helper
             system_prompt = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-
+            # system_prompt = ""
             # Build user content from instruction + (optional) input
             user = example.get("instruction", "")
             if example.get("input"):

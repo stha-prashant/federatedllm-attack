@@ -5,15 +5,43 @@
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=45g
-#SBATCH --time=00-2:00:00
+#SBATCH --time=00-5:00:00
 #SBATCH --job-name=fedllm
-#SBATCH --output=/shared/rc/llm-degredation/logs/logeval_%A.out
-#SBATCH --error=/shared/rc/llm-degredation/logs/logeval_%A.err
+#SBATCH --output=/shared/rc/llm-degredation/logs/logeval1.out
+#SBATCH --error=/shared/rc/llm-degredation/logs/logeval1.err
 
 
 export HUGGINGFACE_HUB_TOKEN='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'
-module purge
-conda activate fedllmold
+# module purge
+# conda activate fedllmold
+# python run_checkpoint_generation_full.py --run_ids brjjyo91 3vwnwunw xdz2tdvx  --eval_list 30 --datasets expguardtest
+# python run_checkpoint_generation_full.py --run_ids dsnrocim bxj6y44j pjvs5u5c --eval_list 30 --datasets directharm expguardtest
+# python run_checkpoint_generation_full.py --run_ids 3g5eksbr fdcuumiq 0x1shryu --eval_list 30 --datasets directharm expguardtest
+# python run_checkpoint_generation_full.py --run_ids 7xbbt70r 9ukzkui7 o6w8ufu1 xvtai1td  --eval_list 30 --datasets directharm expguardtest
+# python run_checkpoint_generation_full.py --run_ids  hjbk71wc 56wbtav3 p04ii2td --eval_list 30 --datasets directharm expguardtest
+# python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids xdz2tdvx dsnrocim 63771uof --datasets advbench pubmedqa medQA emrqa cord19 --eval_list 30
+# python run_checkpoint_generation_full.py  --run_ids h4b1l47d 9w9ylzf3 zt2s6ndc  pbqlda7q ofcehrgv su6939l0 --datasets expguardtest --eval_list 30
+# python generate_from_list.py --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30
+
+python run_checkpoint_generation_full.py --run_ids i0gmap4p  --datasets directharm expguardtest --eval_list 30
+python run_checkpoint_generation_full.py --run_ids kjom8wuc  --datasets directharm expguardtest --eval_list 50
+python run_checkpoint_generation_full.py --run_ids r4zxv8og  --datasets directharm expguardtest --eval_list 1
+
+
+
+# python run_checkpoint_generation_full.py --run_ids 7xbbt70r --datasets advbench pubmedqa medQA emrqa cord19 --eval_list 30
+# python run_checkpoint_generation_full.py --run_ids xvtai1td --datasets directharm expguardtest --eval_list 30
+
+
+# python run_checkpoint_generation_full.py --run_ids kjom8wuc --eval_list 50 --datasets advbench pubmedqa medQA emrqa cord19
+
+
+# python run_checkpoint_generation_full.py --run_ids 9ukzkui7 hjbk71wc fdcuumiq o6w8ufu1 --datasets advbench pubmedqa medQA emrqa cord19 --eval_list 30
+
+# python run_checkpoint_generation_full_copy.py --run_ids xdz2tdvx --datasets advbench pubmedqa medQA emrqa cord19 --eval_list 30
+
+
+# python run_checkpoint_generation_full.py --run_ids f3dv623m w8i0stff vxdqjd7i riyp1557 --eval_list 30 --datasets advbench pubmedqa medQA emrqa cord19
 
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.60 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
@@ -46,7 +74,7 @@ conda activate fedllmold
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.05 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 
-python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids 465 --datasets advbench triviaqa --eval_list 30
+# python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids  7a2n4x6a 5s80d7l5 --datasets advbench pubmedqa medQA emrqa cord19  --eval_list 30
 
 # python run_checkpoint_generation_full.py --safe_lora_original  --run_ids 292 295 299 302 --datasets advbench squad_v2 --eval_list 30
 # python run_checkpoint_generation_full.py   --run_ids 244 --datasets advbench --eval_list 30

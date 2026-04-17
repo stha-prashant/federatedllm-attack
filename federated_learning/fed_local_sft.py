@@ -6,7 +6,7 @@ from transformers import TrainerCallback
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 
-ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum', 'lora_classifier']
+ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum', 'lora_classifier', 'safe_lora_mixture', 'safe_lora_mixture_layerwise', 'safe_lora_mixture_analytical', 'debug_keep5', 'safe_lora_mixture_analytical_oracle', 'safe_lora_mixture_analytical_different', 'safe_lora_mixture_safety_subspace', 'debug_thrown']
 
 
 class DeltaTracker(TrainerCallback):
@@ -129,7 +129,8 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
         trainer.add_callback(SCAFFOLD_Callback(trainer.correction, model))
         if delta_tracker:
             trainer.add_callback(delta_tracker)
-    elif (fed_args.fed_alg in ALGS_NORMAL_TRAINING) or (fed_args.fed_alg).startswith('local'):
+    # elif (fed_args.fed_alg in ALGS_NORMAL_TRAINING) or (fed_args.fed_alg).startswith('local'):
+    else:
         if formatting_prompts_func is None:
             trainer = SFTTrainer(
                 model=model,
@@ -154,8 +155,8 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
             )
             if delta_tracker:
                 trainer.add_callback(delta_tracker)
-    else:
-        raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
+    # else:
+    #     raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
 
     if delta_tracker:
         trainer.delta_tracker = delta_tracker

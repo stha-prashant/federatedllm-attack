@@ -21,7 +21,7 @@ def get_clients_this_round(fed_args, round):
             clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
     return clients_this_round
 
-def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, base_model_path=None, project_matrix=None, script_args=None, asr_rates=None):
+def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, base_model_path=None, project_matrix=None, script_args=None, asr_rates=None, project_matrix_edit=None, safety_gradient_by_param=None):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     global_auxiliary = None
 
@@ -227,6 +227,16 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         model_weight_foolsgold, wv = get_foolsgold(update_cat, global_weight)
 
         current_idx = 0 
+        # save client weights for analysis
+        path = os.path.join(script_args.output_dir, 'foolsgold')
+        os.makedirs(path, exist_ok=True)
+        save_data = {
+            'round_idx': round_idx,
+            'client_weights': wv.cpu().tolist()
+        }
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+
         for key in net_para:
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
@@ -290,6 +300,51 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     elif fed_args.fed_alg == 'safe_lora':
         from .safelora import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safe_lora_mixture':
+        from .safelora_mixture import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safe_lora_mixture_layerwise':
+        from .safelora_mixture_layerwise import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture_layerwise/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safe_lora_mixture_analytical':
+        from .safelora_mixture_analytical import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture_analytical/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safe_lora_mixture_analytical_oracle':
+        from .safelora_mixture_analytical_oracle import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture_analytical_oracle/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    
+    elif fed_args.fed_alg == 'safe_lora_mixture_analytical_different':
+        from .safelora_mixture_analytical_different import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture_analytical_different/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, project_matrix_edit=project_matrix_edit, script_args=script_args)
+    
+    elif fed_args.fed_alg == 'safe_lora_mixture_analytical_different_old':
+        from .safelora_mixture_analytical_different import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture_analytical_different_old/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, project_matrix_edit=project_matrix_edit, script_args=script_args)
+    elif fed_args.fed_alg == 'safe_lora_mixture_safety_subspace':
+        from .safelora_mixture_safety_subspace import aggr
+        global_dict = aggr(
+            global_dict,
+            local_dict_list,
+            sample_num_list,
+            clients_this_round,
+            round_idx,
+            fed_args,
+            proxy_dict=proxy_dict,
+            output_dir=f'./output/safelora_mixture_safety_subspace/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]',
+            project_matrix=project_matrix,
+            script_args=script_args,
+            safety_gradient_by_param=safety_gradient_by_param,
+        )
+    
+    elif fed_args.fed_alg == 'debug_thrown':
+
+        clients_this_round = [0, 1, 2, 3, 4,  5, 6]
+        clients_this_round = [client for client in clients_this_round if client != script_args.throw_n]
+        sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
+
+        for key in global_dict.keys():
+            global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
+            # global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round if client in [0, 1, 2, 3, 4]])
     else:   # Normal dataset-size-based aggregation 
         for key in global_dict.keys():
             global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])

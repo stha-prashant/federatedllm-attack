@@ -257,6 +257,10 @@ def cord19_format(example):
     example['response'] = example['output']
     return example
 
+def expguardtest_format(example):
+    example['instruction'] = example['prompt']
+    return example
+
 
 
 # ============= Load dataset =============
@@ -370,6 +374,17 @@ elif 'pubmedval' in args.bench_name:
     eval_set = eval_set.map(pubmedqa_format)
     eval_set = eval_set.shuffle(seed=2023).select(range(500))
     max_new_tokens = 512
+
+elif args.bench_name == 'directharm':
+    eval_set = datasets.load_dataset('vfleaking/DirectHarm4', split='test')
+    max_new_tokens=1024
+
+elif args.bench_name == 'expguardtest':
+    eval_set = datasets.load_dataset('6rightjade/expguardmix', data_files='expguardtest.parquet')['train']
+    eval_set = eval_set.filter(lambda x: x['domain'] == 'healthcare')
+    eval_set = eval_set.filter(lambda x: x['prompt_label'] == 'unsafe')
+    eval_set = eval_set.map(expguardtest_format)
+    max_new_tokens = 1024
 
 elif 'pubmedtrain' in args.bench_name:
     eval_set = datasets.load_dataset('json', data_files='../../gen_data/PubMedQA_train_sft.jsonl')['train']

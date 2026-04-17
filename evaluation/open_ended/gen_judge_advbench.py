@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--model_answer", type=str, default=None)
 parser.add_argument("--judger", type=str, default="rule")
 parser.add_argument("--bench_name", type=str, default="advbench")
+parser.add_argument("--wandb_id", type=str, default=None)
 parser.add_argument("--neptune_id", type=str, default=None)
 parser.add_argument("--round", type=str, default=None)
 parser.add_argument("--keyword", type=str, default="")  # additional keyword to distinguish different checkpoints
@@ -236,8 +237,9 @@ def minimum_normalization(s):
     return s
 
 
-if args.bench_name == 'advbench' or args.bench_name == 'maliciousgen':
+if args.bench_name == 'advbench' or args.bench_name == 'maliciousgen' or args.bench_name == 'directharm' or args.bench_name == 'expguardtest':
     count = 0
+    
     harmless_count = 0
     for output in tqdm(model_outputs):
         count += 1
@@ -805,22 +807,26 @@ elif 'medQA' in args.bench_name:
     score = accuracy
 
 
-# ============= Log the score to Neptune =============
+# ============= Log the score to W&B =============
 
 
-print("before neptune")
-if args.neptune_id is not None:
-    print("after neptune")
-    NEPTUNE_PROJECT = os.environ.get("NEPTUNE_PROJECT", "fedllm/fedllm")
-    import neptune
-    token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ=='
-    # write score to already existing neptune run
-    run = neptune.init_run(
-        project=NEPTUNE_PROJECT,
-        api_token=token,
-        with_id=args.neptune_id,
+print("before wandb")
+target_wandb_id = args.wandb_id if args.wandb_id is not None else args.neptune_id
+if target_wandb_id is not None and target_wandb_id != "NO_WANDB" and target_wandb_id != "NO_NEPTUNE":
+    import wandb
+    WANDB_PROJECT = "fedllm_fedllm"
+    WANDB_ENTITY = "ritps9044"
+    run = wandb.init(
+        project=WANDB_PROJECT,
+        entity=WANDB_ENTITY,
+        id=target_wandb_id,
+        resume="allow",
     )
+    metric_name = None
     if args.round is not None:
-        run[f"evaluation/{args.bench_name}/score{args.round}_greedy{args.keyword}"].log(score)
+        metric_name = f"evaluation_{args.bench_name}_score{args.round}_greedy{args.keyword}"
     else:
-        run[f"evaluation/{args.bench_name}/score_greedy{args.keyword}"].log(score)
+        metric_name = f"evaluation_{args.bench_name}_score_greedy{args.keyword}"
+    run.log({metric_name: score})
+    run.summary[metric_name] = score
+    run.finish()

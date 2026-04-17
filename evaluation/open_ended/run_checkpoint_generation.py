@@ -3,80 +3,21 @@ from pathlib import Path
 import os, json, math, re, shutil, itertools, time
 import torch
 from typing import List, Dict, Any
+from wandb_utils import resolve_one_run
 
-USE_NEPTUNE = True
-# NEPTUNE_RUN_IDS = [f'FED-{x}' for x in [68, 77]] #base wildchat and postfine of that
-# NEPTUNE_RUN_IDS = [f'FED-{x}' for x in [51, 136, 10, 124, 62, 142, 137]] #base wildchat and postfine of that
-# NEPTUNE_RUN_IDS = [f'FED-{x}' for x in [68]] #base wildchat and postfine of that
-# NEPTUNE_RUN_IDS = [f'FED-{x}' for x in [10]] #base wildchat and postfine of that
+USE_WANDB = True
+# WANDB_RUN_IDS = [str(x) for x in [68, 77]] #base wildchat and postfine of that
+# WANDB_RUN_IDS = [str(x) for x in [51, 136, 10, 124, 62, 142, 137]] #base wildchat and postfine of that
+# WANDB_RUN_IDS = [str(x) for x in [68]] #base wildchat and postfine of that
+# WANDB_RUN_IDS = [str(x) for x in [10]] #base wildchat and postfine of that
 
-NEPTUNE_RUN_IDS = [f'FED-{x}' for x in [178]]
-
-NEPTUNE_PROJECT = os.environ.get("NEPTUNE_PROJECT", "fedllm/fedllm")
+WANDB_RUN_IDS = [str(x) for x in [178]]
 
 RUNS_TO_PROCESS = []  # list of dicts: {"run_id": str, "base_output_dir": str, "model_name_or_path": str|None}
 
-if USE_NEPTUNE and NEPTUNE_RUN_IDS:
-    import neptune
-    token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ=='
-
-    def resolve_one_run(run_id: str):
-        print("here")
-        run = neptune.init_run(project=NEPTUNE_PROJECT, with_id=run_id, api_token=token, mode="read-only")
-        print("done")
-        resolved = None
-        for field in [
-            "parameters/total_output_dir",
-            "parameters/script_args/output_dir",
-        ]:
-            try:
-                v = run[field].fetch()
-                if isinstance(v, str) and v:
-                    resolved = v
-                    break
-            except Exception:
-                pass
-        try:
-            model_name_or_path = run["parameters/script_args/model_name_or_path"].fetch()
-            num_rounds = run['parameters/fed_args/num_rounds'].fetch()
-            sample_clients = run['parameters/fed_args/sample_clients'].fetch()
-            template = run['parameters/script_args/template'].fetch()
-        except Exception:
-            model_name_or_path = None
-
-        # Fallback: best-effort local guess by run id name
-        if not resolved:
-            from pathlib import Path
-            def _guess_dir_from_run_id(rid: str) -> str | None:
-                candidates = [Path("./outputs"), Path(".")]
-                for root in candidates:
-                    if (root / rid).is_dir() and (root / rid / "lora_updates").is_dir():
-                        return str(root / rid)
-                    for p in root.glob(f"**/{rid}"):
-                        if p.is_dir() and (p / "lora_updates").is_dir():
-                            return str(p)
-                return None
-            guess = _guess_dir_from_run_id(run_id)
-            if guess:
-                resolved = guess
-                print(f"[Neptune] Guessed BASE_OUTPUT_DIR for {run_id}: {resolved}")
-        print(resolved, model_name_or_path, num_rounds, sample_clients)
-        # if resolved:
-        RUNS_TO_PROCESS.append({
-            "run_id": run_id,
-            "base_output_dir": resolved,
-            "model_name_or_path": model_name_or_path,
-            "num_rounds": num_rounds,
-            "sample_clients": sample_clients,
-            "template": template
-        })
-        # else:
-        #     print(f"[WARN] Could not resolve output_dir for run {run_id}; skipping.")
-        # run.stop()
-
-
-    for rid in NEPTUNE_RUN_IDS:
-        resolve_one_run(rid)
+if USE_WANDB and WANDB_RUN_IDS:
+    for rid in WANDB_RUN_IDS:
+        RUNS_TO_PROCESS.append(resolve_one_run(rid))
 
 
 from pathlib import Path

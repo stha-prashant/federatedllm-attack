@@ -94,6 +94,10 @@ class ScriptArguments:
     prefilter_strategy: Optional[str] = field(default="none", metadata={"help": "Prefilter strategy: step-level, client-level, shadow-level, none"})
     prefilter_round: Optional[int] = field(default=20, metadata={"help": "Apply dynamic prefiltering for first N rounds"})
     prefilter_skip_avg_weight: Optional[float] = field(default=0.2, metadata={"help": "Skip aggregation when avg client weight is below threshold"})
+
+    analytical_alpha: Optional[float] = field(default=1.0, metadata={"help": "the alpha parameter for analytical SafeLoRA"})
+
+    throw_n: Optional[int] = field(default=4, metadata={"help": "the index`of clients to throw away in each round for analytical SafeLoRA"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 
@@ -165,9 +169,14 @@ def get_model_config(script_args):
 
 def create_experiment_name(script_args, fed_args):
     benign_parts = []
-    for name, num in zip(fed_args.benign_dataset_names, fed_args.benign_num_clients):
-        simplified_name = name.split('/')[-1].split('-')[0]
-        benign_parts.append(f"{simplified_name}{num}")
+    if len(fed_args.benign_dataset_names) == len(fed_args.benign_num_clients):
+        for name, num in zip(fed_args.benign_dataset_names, fed_args.benign_num_clients):
+            simplified_name = name.split('/')[-1].split('-')[0]
+            benign_parts.append(f"{simplified_name}{num}")
+    else:
+        for name in fed_args.benign_dataset_names:
+            simplified_name = name.split('/')[-1].split('-')[0]
+            benign_parts.append(f"{simplified_name}")
 
     malicious_parts = []
     for name, num in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):

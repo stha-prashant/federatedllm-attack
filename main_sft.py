@@ -12,7 +12,7 @@ from utils import *
 from federated_learning import *
 from federated_learning.fed_lora_classifier import Evaluation, FedLoRAClassifier
 from config import get_config, save_config, get_model_config, get_training_args
-import neptune
+import wandb
 import dataclasses
 import torch
 import json
@@ -25,13 +25,27 @@ from utils.evaluate_medqa import compute_medqa_accuracy
 from utils.evaluate_advbench import compute_advbench_asr
 from trl import SFTTrainer
 from utils.process_dataset import get_sft_datasets_dirichlet
+import utils.process_dataset as process_dataset_utils
 access_token = os.environ.get('HUGGINGFACE_HUB_TOKEN', None)
 
 if access_token is None:
     raise ValueError("HUGGINGFACE_HUB_TOKEN environment variable not set.")
-run = neptune.init_run(project="fedllm/fedllm",
-    api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIzZDNlMTFjYi0wMzQ4LTRmMDUtOTk4NC0wZjBlOGU5NGExMmYifQ==",
-)
+
+WANDB_PROJECT = "fedllm_fedllm"
+WANDB_ENTITY = "ritps9044"
+run = wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY)
+
+
+def wandb_set(key, value):
+    # run.summary[key] = value
+    run.config.update({key:value}, allow_val_change=True)
+
+
+def wandb_log(key, value, step=None):
+    if step is None:
+        run.log({key: value})
+    else:
+        run.log({key: value}, step=step)
 
 def compact_state_dict(sd: dict):
     out = {}
@@ -46,6 +60,93 @@ def compact_state_dict(sd: dict):
         else:
             out[k] = v
     return out
+
+
+def chunk_list(items, chunk_size):
+    for i in range(0, len(items), chunk_size):
+        yield items[i:i + chunk_size]
+
+
+def get_trainable_param_map(model, matrix_only=True):
+    params = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if matrix_only and p.ndim != 2:
+            continue
+        params.append((name, p))
+    return params
+
+
+def _example_to_text(example):
+    if "formatted_chat" in example:
+        return example["formatted_chat"]
+
+    instruction = example.get("instruction", "")
+    response = example.get("response", "")
+    inp = example.get("input", "")
+    if inp:
+        instruction = f"{instruction}\n{inp}"
+    return f"### Instruction:\n{instruction}\n\n### Response:\n{response}"
+
+
+def condition_gradient_by_parameter(
+    model,
+    tokenizer,
+    texts,
+    max_length,
+    batch_size,
+    aggregation="mean_over_batches",
+    matrix_only=True,
+    clear_cuda_cache=False,
+):
+    trainable_params = get_trainable_param_map(model, matrix_only=matrix_only)
+    grad_acc = {name: torch.zeros_like(p, dtype=torch.float32, device="cpu") for name, p in trainable_params}
+
+    embed_device = model.get_input_embeddings().weight.device
+    num_batches = 0
+    for text_batch in chunk_list(texts, batch_size):
+        encoded = tokenizer(
+            text_batch,
+            truncation=True,
+            max_length=max_length,
+            padding=True,
+            return_tensors="pt",
+        )
+        encoded = {k: v.to(embed_device, non_blocking=True) for k, v in encoded.items()}
+        labels = encoded["input_ids"].clone()
+
+        model.zero_grad(set_to_none=True)
+        outputs = model(**encoded, labels=labels)
+        loss = outputs.loss
+        loss.backward()
+
+        for name, p in trainable_params:
+            g = p.grad
+            if g is None:
+                continue
+            grad_acc[name] += g.detach().float().cpu()
+
+        num_batches += 1
+
+        del loss
+        del outputs
+        del labels
+        del encoded
+
+        if torch.cuda.is_available() and clear_cuda_cache:
+            torch.cuda.empty_cache()
+
+        if aggregation == "single_batch":
+            break
+
+    if aggregation == "mean_over_batches" and num_batches > 0:
+        inv = 1.0 / float(num_batches)
+        for name in grad_acc:
+            grad_acc[name] *= inv
+
+    model.zero_grad(set_to_none=True)
+    return grad_acc
 
 
 def _to_short_name(full_name: str) -> str:
@@ -138,6 +239,7 @@ if alloc is not None:
 
 
 project_matrix = None
+project_matrix_edit =None
 if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora' or script_args.safe_lora_original:
     if 'chat' not in script_args.template.lower():
         with open('project_matrix_safelora_torch.float32_harmful.pkl', 'rb') as f:
@@ -145,6 +247,11 @@ if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora' or script_args.safe_lor
     else:
         with open('project_matrix_safelora_torch.float32_harmful_systemprompt.pkl', 'rb') as f:
             project_matrix = pickle.load(f)
+
+
+if 'safe_lora_mixture_analytical_different' in fed_args.fed_alg:
+    with open('project_matrix_safelora_torch.float32_correct.pkl', 'rb') as f:
+        project_matrix_edit = pickle.load(f)
         
 def projected_weighted(peft_model, peft_config, project_matrix):
     """
@@ -214,9 +321,9 @@ def projected_weighted_original_safelora(peft_model, peft_config, project_matrix
     cos_total = []
     for (name, param),(name_ori, param_ori) in zip(peft_model.named_parameters(), model_ori.named_parameters()):
         if 'lora' in name:
-            if param.shape[0] == peft_config.r:
+            if param.shape[0] < 100:
                 B = copy.deepcopy(param_ori)
-            if param.shape[0] != peft_config.r:
+            if param.shape[0] > 100:
                 P = v[idx].to(param.device)
                 W = torch.mm(P, param_ori.data)
                 fW = torch.mm(W, B)
@@ -278,31 +385,31 @@ def _flatten_dict(d, parent_key=""):
     """Flatten nested dict into {parent/child: value}"""
     items = {}
     for k, v in d.items():
-        new_key = f"{parent_key}/{k}" if parent_key else k
+        new_key = f"{parent_key}_{k}" if parent_key else k
         if isinstance(v, dict):
             items.update(_flatten_dict(v, new_key))
         else:
             items[new_key] = v
     return items
 
-def log_args_to_neptune(run, name, obj):
+def log_args_to_wandb(run, name, obj):
     plain = _to_plain_dict(obj)
     flat = _flatten_dict(plain, parent_key=name)
+    payload = {}
     for k, v in flat.items():
-        # neptune metadata keys cannot contain leading slashes, put them under 'parameters'
-        key = f"parameters/{k}"
+        key = f"parameters_{k}"
         try:
-            run[key] = v
+            payload[key] = v
         except Exception:
-            # fallback to string for any weird types
-            run[key] = str(v)
+            payload[key] = str(v)
+    run.config.update(payload, allow_val_change=True)
 
 # Log your argument objects
-log_args_to_neptune(run, "script_args", script_args)
-log_args_to_neptune(run, "fed_args", fed_args)
-log_args_to_neptune(run, "peft_config", peft_config)
+log_args_to_wandb(run, "script_args", script_args)
+log_args_to_wandb(run, "fed_args", fed_args)
+log_args_to_wandb(run, "peft_config", peft_config)
 # training_args may be a dataclass from transformers; dataclasses.asdict will work above
-log_args_to_neptune(run, "training_args", training_args)
+log_args_to_wandb(run, "training_args", training_args)
 
 sample_num_list = [len(local_datasets[i]) for i in range(fed_args.num_clients)]
 
@@ -332,7 +439,9 @@ def set_lora_init_seed(seed: int = 2025):
     np.random.seed(seed)
 if script_args.existing_lora is not None:
     model = PeftModel.from_pretrained(model, script_args.existing_lora+'/checkpoint-30', is_trainable=True)
+    print("Loaded existing LoRA from", script_args.existing_lora)
 else:
+    
     set_lora_init_seed(script_args.seed)
     model = get_peft_model(model, peft_config)
     i = 10
@@ -354,25 +463,32 @@ if script_args.safe_lora_original:
         # save peft model
         model.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
         tokenizer.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
-        run[f'parameters/safelora_original_saved_path_{thrs}'] = script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}'
-        run['parameters/total_output_dir'] = script_args.existing_lora
+        wandb_set(f'parameters_safelora_original_saved_path_{thrs}', script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
+        wandb_set('parameters_total_output_dir', script_args.existing_lora)
 
-    eval_str = '30'
-    benign_dataset_names = script_args.existing_lora.lower()
-    dataset_str = ''
-    if 'squad' in benign_dataset_names:
-        dataset_str += "squad_v2 "
-    if 'pubmed' in benign_dataset_names:
-        dataset_str += "pubmedqa "
-    if 'metamathqa' in benign_dataset_names:
-        dataset_str += "gsm8k "
-    if 'triviaqa' in benign_dataset_names:
-        dataset_str += 'triviaqa '
-    run_id = run['sys/id'].fetch().split('-')[-1]
-    run['parameters/fed_args/fed_alg'] = "safelora_original"
-    run['parameters/benign_dataset_names'] = dataset_str
-    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str} --safe_lora_original_minimal'
-    os.system(command)
+    # eval_str = '30'
+    # benign_dataset_names = script_args.existing_lora.lower()
+    # dataset_str = ''
+    # if 'squad' in benign_dataset_names:
+    #     dataset_str += "squad_v2 "
+    # if 'pubmed' in benign_dataset_names:
+    #     dataset_str += "pubmedqa "
+    # if 'metamathqa' in benign_dataset_names:
+    #     dataset_str += "gsm8k "
+    # if 'triviaqa' in benign_dataset_names:
+    #     dataset_str += 'triviaqa '
+    # if 'medqa' in benign_dataset_names:
+    #     dataset_str += 'medQA '
+    # if 'emrqa' in benign_dataset_names:
+    #     dataset_str += 'emrqa '
+    # if 'cord19' in benign_dataset_names:
+    #     dataset_str += 'cord19 '
+    
+    # run_id = run.id
+    # wandb_set('parameters_fed_args_fed_alg', "safelora_original")
+    # wandb_set('parameters_benign_dataset_names', dataset_str)
+    # command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str} --safe_lora_original_minimal'
+    # os.system(command)
     exit()
 
 
@@ -411,16 +527,38 @@ if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
     sst2_response_template_ids = tokenizer.encode(sst2_response_template, add_special_tokens=False)[2:]
     sst2_data_collator = DataCollatorForCompletionOnlyLM(sst2_response_template_ids, tokenizer=tokenizer)
 
-run['parameters/total_output_dir'] = script_args.output_dir
-run['parameters/benign_num_clients'] = '_'.join([str(n) for n in fed_args.benign_num_clients])
-run['parameters/benign_dataset_names'] = '_'.join(fed_args.benign_dataset_names)
-run['parameters/malicious_num_clients'] = '_'.join([str(n) for n in fed_args.malicious_num_clients])
-run['parameters/malicious_dataset_names'] = '_'.join(fed_args.malicious_dataset_names)
+
+compute_round_safety_gradient = (fed_args.fed_alg == 'safe_lora_mixture_safety_subspace')
+safety_grad_dataset = None
+if compute_round_safety_gradient:
+    safety_dataset_name = getattr(fed_args, 'safety_gradient_dataset_name', 'oneshotpatch')
+    safety_pool_size = int(getattr(fed_args, 'safety_gradient_pool_size', 1))
+    safety_grad_dataset = process_dataset_utils.process_sft_dataset(
+        safety_dataset_name,
+        process_dataset_utils.get_whole_dataset(safety_dataset_name, script_args.local_data_dir),
+        script_args.template,
+        safety_pool_size,
+        False,
+        tokenizer=tokenizer,
+    )
+    print(f"[safety-gradient] enabled for fed_alg={fed_args.fed_alg}, dataset={safety_dataset_name}, pool={len(safety_grad_dataset)}")
+
+
+
+# if 'oneshotpatch' in fed_args.benign_dataset_names:
+#     script_args.output_dir = os.path.join(script_args.existing_lora, 'oneshotpatch')
+#     os.makedirs(script_args.output_dir, exist_ok=True)
+    
+wandb_set('parameters_total_output_dir', script_args.output_dir)
+wandb_set('parameters_benign_num_clients', '_'.join([str(n) for n in fed_args.benign_num_clients]))
+wandb_set('parameters_benign_dataset_names', '_'.join(fed_args.benign_dataset_names))
+wandb_set('parameters_malicious_num_clients', '_'.join([str(n) for n in fed_args.malicious_num_clients]))
+wandb_set('parameters_malicious_dataset_names', '_'.join(fed_args.malicious_dataset_names))
 try:
-    run['parameters/mixture_num_clients'] = fed_args.mixture_num_clients
+    wandb_set('parameters_mixture_num_clients', fed_args.mixture_num_clients)
     if len(fed_args.mixture_benign_proportions) == 1:
         fed_args.mixture_benign_proportions = fed_args.mixture_benign_proportions * fed_args.mixture_num_clients
-    run['parameters/mixture_benign_proportions'] = '_'.join([str(p) for p in fed_args.mixture_benign_proportions])
+    wandb_set('parameters_mixture_benign_proportions', '_'.join([str(p) for p in fed_args.mixture_benign_proportions]))
 except:
     pass
 # if fed_args.safe_lora:
@@ -555,7 +693,7 @@ for round in tqdm(range(fed_args.num_rounds)):
 
         results = trainer.train()
         training_loss[client].append(results.training_loss)
-        run["client_{}/training_loss".format(client)].append(results.training_loss, step=round_idx)
+        wandb_log("client_{}/training_loss".format(client), results.training_loss, step=round_idx)
 
         # ===== Client transmits local information to server =====
         if fed_args.fed_alg == 'scaffold':
@@ -695,6 +833,47 @@ for round in tqdm(range(fed_args.num_rounds)):
         np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
         continue
 
+    round_safety_gradient_by_param = None
+    if compute_round_safety_gradient:
+        if safety_grad_dataset is None or len(safety_grad_dataset) == 0:
+            raise ValueError("Safety gradient dataset is empty. Check safety_gradient_dataset_name/pool_size config.")
+
+        set_peft_model_state_dict(model, global_dict)
+
+        safety_eval_size = int(getattr(fed_args, 'safety_gradient_eval_size', 1))
+        eval_size = min(max(1, safety_eval_size), len(safety_grad_dataset))
+        safety_texts = [_example_to_text(safety_grad_dataset[i]) for i in range(eval_size)]
+
+        round_safety_gradient_by_param = condition_gradient_by_parameter(
+            model=model,
+            tokenizer=tokenizer,
+            texts=safety_texts,
+            max_length=script_args.seq_length,
+            batch_size=int(getattr(fed_args, 'safety_gradient_batch_size', 1)),
+            aggregation=str(getattr(fed_args, 'safety_gradient_aggregation', 'single_batch')),
+            matrix_only=bool(getattr(fed_args, 'safety_gradient_matrix_only', True)),
+            clear_cuda_cache=bool(getattr(fed_args, 'safety_gradient_clear_cuda_cache', False)),
+        )
+
+        try:
+            safety_grad_dir = os.path.join(script_args.output_dir, 'safety_gradient')
+            os.makedirs(safety_grad_dir, exist_ok=True)
+            meta = {
+                "round_idx": round_idx,
+                "fed_alg": fed_args.fed_alg,
+                "dataset": str(getattr(fed_args, 'safety_gradient_dataset_name', 'oneshotpatch')),
+                "num_texts": int(len(safety_texts)),
+                "num_params": int(len(round_safety_gradient_by_param)),
+                "aggregation": str(getattr(fed_args, 'safety_gradient_aggregation', 'single_batch')),
+                "matrix_only": bool(getattr(fed_args, 'safety_gradient_matrix_only', True)),
+            }
+            with open(os.path.join(safety_grad_dir, f'round_{round_idx}.json'), 'w') as f:
+                json.dump(meta, f, indent=2)
+        except Exception as log_e:
+            print(f"[warn] failed to save safety-gradient metadata for round {round_idx}: {log_e}")
+
+        print(f"[safety-gradient] round={round_idx}, params={len(round_safety_gradient_by_param)}, texts={len(safety_texts)}")
+
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
         fed_args, global_dict, local_dict_list, aggregation_sample_num_list, \
@@ -702,6 +881,8 @@ for round in tqdm(range(fed_args.num_rounds)):
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict),
         base_model_path=script_args.model_name_or_path,
         project_matrix=project_matrix,
+        project_matrix_edit=project_matrix_edit,
+        safety_gradient_by_param=round_safety_gradient_by_param,
         script_args=script_args,
         asr_rates=asr_rates,
     )
@@ -792,7 +973,7 @@ if fed_args.num_rounds == 30:
     eval_str = '30' 
 
 
-    # find the neptune run id of this
+    # find the wandb run id of this
     benign_dataset_names = '_'.join(fed_args.benign_dataset_names).lower()
     dataset_str = ''
     if 'squad' in benign_dataset_names:
@@ -813,8 +994,10 @@ if fed_args.num_rounds == 30:
         dataset_str += 'emrqa '
     if 'cord19' in benign_dataset_names:
         dataset_str += 'cord19 '
-    run_id = run['sys/id'].fetch().split('-')[-1]
-    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
+    run_id = run.id
+    run.finish()
+
+    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
     os.system(command)
 
 
@@ -830,9 +1013,12 @@ elif fed_args.num_rounds == 50:
         dataset_str += "gsm8k "
     if 'triviaqa' in benign_dataset_names:
         dataset_str += 'triviaqa '
-    run_id = run['sys/id'].fetch().split('-')[-1]
-    run['parameters/fed_args/fed_alg'] = "postfinetune"
-    run['parameters/benign_dataset_names'] = dataset_str
-    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench {dataset_str} --eval_list {eval_str}'
+    run_id = run.id
+    run.finish()
+
+    wandb_set('parameters_fed_args_fed_alg', "postfinetune")
+    wandb_set('parameters_benign_dataset_names', dataset_str)
+    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
     os.system(command)
+
 

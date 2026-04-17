@@ -4,7 +4,6 @@
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=00-15:00:00
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
 #SBATCH --output=/scratch/ps9044/fedllm/log_%A.out
@@ -22,8 +21,8 @@ batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
 sample_clients=10
-lora_r=128
-lora_alpha=256  # twice of lora_r
+lora_r=32
+lora_alpha=64  # twice of lora_r
 lr=5e-5
 
 num_data_per_client=500
@@ -75,12 +74,12 @@ gpu=0
 
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
-output_dir='/scratch/ps9044/newsetting'
+output_dir='/scratch/ps9044_copy_copy/newsetting'
  
 # fed_alg="fedgraph"
 # fed_alg="eval_filter"
-fed_alg=fedavg
-mixture_dirichlet_alpha=0.2
+fed_alg=$method
+mixture_dirichlet_alpha=$alpha
 
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
@@ -105,6 +104,7 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --safe_lora \
  --template "chat" \
+ --seed $seed \
  --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
 #  --mixture_num_clients $mixture_num_clients \
 #  --mixture_benign_proportions ${mixture_benign_proportions[@]} \
