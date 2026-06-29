@@ -35,7 +35,7 @@ fed_alg="fedavg"
 
 # LoRA Classifier Pre-filter Configuration
 prefilter_enable=True                  
-prefilter_classifier_path="/home/ps9044/FedLLM-Attack/Llama-2-7b-chat-hf/classifier_fixed.pt"                   
+prefilter_classifier_path="/home/ps9044/RPA/fedllm-attack/Llama-2-7b-chat-hf/classifier_fixed.pt"                   
 prefilter_strategy="client-level"                              # Pre-filtering weight policy options: step-level, client-level, shadow-level, none
 prefilter_round=30
 
@@ -64,7 +64,7 @@ malicious_num_clients=(3)
 # malicious_dataset_names=("stanfordnlp/sst2") # PKU-Alignment/BeaverTails, MaliciousGen
 
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
-gpu=0
+gpu=5
 
 mixture_dirichlet_alpha=0.2
 malicious_num_clients=(3)

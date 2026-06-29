@@ -6,7 +6,7 @@ from transformers import TrainerCallback
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 
-ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum', 'lora_classifier', 'safe_lora_mixture', 'safe_lora_mixture_layerwise', 'safe_lora_mixture_analytical', 'debug_keep5', 'safe_lora_mixture_analytical_oracle', 'safe_lora_mixture_analytical_different', 'safe_lora_mixture_safety_subspace', 'debug_thrown']
+ALGS_NORMAL_TRAINING = ['fedavg', 'fedavgm', 'fedadgrad', 'fedyogi', 'fedadam', 'median', 'krum', 'trimmedmean', 'foolsgold', 'residual', 'dnc', 'fedgraph', 'cosine_clustering', 'safe_lora', 'eval_filter', 'krumoriginal', 'multikrum', 'lora_classifier', 'safe_lora_mixture', 'safe_lora_mixture_layerwise', 'safe_lora_mixture_analytical', 'debug_keep5', 'safe_lora_mixture_analytical_oracle', 'safe_lora_mixture_analytical_different', 'safe_lora_mixture_safety_subspace', 'debug_thrown', 'safelorav2data']
 
 
 class DeltaTracker(TrainerCallback):

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 @dataclass
 class FedArguments:
     fed_alg: Optional[str] = field(default="fedavg", metadata={"help": "the algorithm to use"})
+    foolsgoldbenign_reference: Optional[str] = field(default=None, metadata={"help": "the reference path for FoolsgoldBenign"})
     num_rounds: Optional[int] = field(default=500, metadata={"help": "the number of rounds"})
     # num_clients: Optional[int] = field(default=2, metadata={"help": "the number of clients"})
     sample_clients: Optional[int] = field(default=2, metadata={"help": "the number of clients to sample"})
@@ -98,6 +99,8 @@ class ScriptArguments:
     analytical_alpha: Optional[float] = field(default=1.0, metadata={"help": "the alpha parameter for analytical SafeLoRA"})
 
     throw_n: Optional[int] = field(default=4, metadata={"help": "the index`of clients to throw away in each round for analytical SafeLoRA"})
+
+    safelora_matrix_config: Optional[str] = field(default=None, metadata={"help": "Optional JSON file overriding SafeLoRA matrix paths per model family"})
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 

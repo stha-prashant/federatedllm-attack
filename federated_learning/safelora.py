@@ -14,7 +14,8 @@ def get_aligned_matrix(device='cpu'):
     The dimensions between the base model's weights and the aligned model's weights should be the same.
     """
     base_model = AutoModelForCausalLM.from_pretrained(
-        'meta-llama/Llama-2-7b-hf',
+        # 'meta-llama/Llama-2-7b-hf',
+        '/scratch/ps9044/purebad1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260517164625/full-10',
         # '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
         # '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50',
         return_dict=True,
@@ -25,6 +26,8 @@ def get_aligned_matrix(device='cpu'):
     )
     base_model_for_peft = AutoModelForCausalLM.from_pretrained(
         'meta-llama/Llama-2-7b-hf',
+        # '/scratch/ps9044/purebad1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260517164625/full-50',
+
         # '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
         # '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50',
         return_dict=True,
@@ -46,7 +49,7 @@ def get_aligned_matrix(device='cpu'):
     #Fed-134, fedgraph
     # checkpoint_path = '/scratch/ps9044/fedllm/barebones/WildChat7_BeaverTails3_500_fedgraph_c10s10_i10_b16a1_l512_r32a64_20251030220628/checkpoint-10'
     checkpoint_path = '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/checkpoint-10'
-
+    checkpoint_path = '/scratch/ps9044/purebad1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260517164625/checkpoint-10'
     peft_model = PeftModel.from_pretrained(base_model_for_peft, checkpoint_path, is_trainable=False).to(device)
     peft_config = peft_model.peft_config['default']
     print(peft_config.target_modules)
@@ -72,10 +75,37 @@ def get_aligned_matrix(device='cpu'):
             # vec = torch.mm(vec, vec.t()) / torch.norm(vec)
             # vec = vec @ torch.linalg.pinv(vec.t() @ vec) @ vec.t()
             v.append((vec).detach().cpu())
-    # save v to ../project_matrix.pkl
-    with open(f'../delta_matrix_safelora_{base_model.dtype}.pkl', 'wb') as f:
+            
+    # save v to ../delta_matrix.pkl
+    with open(f'../delta_matrix_purebad10rounds_harmful_{base_model.dtype}.pkl', 'wb') as f:
         pickle.dump(v, f)
-        print("Saved projection matrix to ", f'../project_matrix_safelora_{base_model.dtype}_harmful_systemprompt_correct.pkl')
+        print("Saved delta matrix to ", f'../delta_matrix_purebad10rounds_harmful_{base_model.dtype}.pkl')
+
+    for (b_name, b_param) , (a_name, a_param) in zip (base_model.named_parameters(), aligned_model.named_parameters()):
+        if any(module in a_name for module in proj_modules):
+            assert b_param.shape == a_param.shape, "The dimensions of the base model's weight should be the same with the aligned model's weight."
+            vec = a_param - b_param
+            vec = vec.to(device)
+            vec = torch.mm(vec, vec.t()) / torch.norm(vec)
+            # vec = vec @ torch.linalg.pinv(vec.t() @ vec) @ vec.t()
+            v.append((vec).detach().cpu())
+    # save v to ../delta_matrix.pkl
+    with open(f'../project_matrix_purebad10rounds_harmful_{base_model.dtype}.pkl', 'wb') as f:
+        pickle.dump(v, f)
+        print("Saved projection matrix to ", f'../project_matrix_purebad10rounds_harmful_{base_model.dtype}.pkl')
+
+    for (b_name, b_param) , (a_name, a_param) in zip (base_model.named_parameters(), aligned_model.named_parameters()):
+        if any(module in a_name for module in proj_modules):
+            assert b_param.shape == a_param.shape, "The dimensions of the base model's weight should be the same with the aligned model's weight."
+            vec = a_param - b_param
+            vec = vec.to(device)
+            # vec = torch.mm(vec, vec.t()) / torch.norm(vec)
+            vec = vec @ torch.linalg.pinv(vec.t() @ vec) @ vec.t()
+            v.append((vec).detach().cpu())
+    # save v to ../delta_matrix.pkl
+    with open(f'../project_matrix_purebad10rounds_harmful_{base_model.dtype}_correct.pkl', 'wb') as f:
+        pickle.dump(v, f)
+        print("Saved projection matrix to ", f'../project_matrix_purebad10rounds_harmful_{base_model.dtype}_correct.pkl')
 
 
 # def projected_weighted(peft_model, peft_config, project_matrix):
@@ -350,6 +380,7 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
         p >= prob_threshold
     ]
 
+    # selected_clients = [0, 1, 2, 3, 4]
     if len(selected_clients) == 0:
         # select the top half clients if all are detected as malicious
         # sorted_clients = sorted(

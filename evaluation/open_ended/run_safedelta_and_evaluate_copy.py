@@ -15,8 +15,13 @@ def list_checkpoints_path(base_output_dir: str, args=None, safe_delta_criteria=F
     if not base_path.is_dir():
         print(f"[WARN] Base output dir {base_output_dir} does not exist or is not a directory.")
         return []
-    checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' not in str(p.name)]
+    # checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' not in str(p.name)]
+    checkpoint_dirs = [p for p in base_path.glob('full*') if p.is_dir()]
+    checkpoint_dirs = [p for p in checkpoint_dirs if 'Safe' in str(p.name)]
+
+    
+
     # if len(checkpoint_dirs_test) == 0:
     #     checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' in str(p.name)]
     # else:
@@ -24,9 +29,9 @@ def list_checkpoints_path(base_output_dir: str, args=None, safe_delta_criteria=F
     if not args.safe_lora_original:
         checkpoint_dirs = [p for p in checkpoint_dirs if 'safe' not in str(p.name)]
     
-    checkpoint_dirs = sorted(checkpoint_dirs,
-        key=lambda p: int(p.name.split('-')[-1].split('_')[0])
-    )
+    # checkpoint_dirs = sorted(checkpoint_dirs,
+    #     key=lambda p: int(p.name.split('-')[-1].split('_')[0])
+    # )
 
 
     
@@ -63,27 +68,27 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
             
             # print(f"Found {len(checkpoint_dirs)} checkpoints in {item['base_output_dir']}")
             for checkpoint_dir in checkpoint_dirs:
-                if checkpoint_dir.name.split('-')[-1].split('_')[0] in eval_list:
+                # if checkpoint_dir.name.split('-')[-1].split('_')[0] in eval_list:
 
-                    gpu_id = (gpu_id + 1) % len(gpus)
-                    # print("Running generation file")
-                    if ds == 'mtbench':
-                        command = f'python gen_model_answer_mt.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir}  --template {item["template"]}'
-                        print("MTBENCH COMMAND: ", command)                
-                    else:
-                        # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-                        if args.safe_delta_original:
-                            checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginal{args.safe_delta_thrs}'
-                        command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
+                gpu_id = (gpu_id + 1) % len(gpus)
+                # print("Running generation file")
+                if ds == 'mtbench':
+                    command = f'python gen_model_answer_mt.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir}  --template {item["template"]}'
+                    print("MTBENCH COMMAND: ", command)                
+                else:
+                    # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
+                    # if args.safe_delta_original:
+                    #     checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginal{args.safe_delta_thrs}'
+                    command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
 
-                    print(command)
-                    # input("Press Enter to continue...")
-                    processes.append(subprocess.Popen(command, shell=True))
-                    print("-----------Num Processes--------------: ", len(processes))
-                    if len(processes) >= len(gpus):
-                        for p in processes:
-                            p.wait()
-                        processes = []
+                print(command)
+                # input("Press Enter to continue...")
+                processes.append(subprocess.Popen(command, shell=True))
+                print("-----------Num Processes--------------: ", len(processes))
+                if len(processes) >= len(gpus):
+                    for p in processes:
+                        p.wait()
+                    processes = []
 
 def judge_all_responses_mt(runs_dict, ds='mtbench', eval_list = None, args=None):
     model_list = []
@@ -166,14 +171,14 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
             print("Judging run id ", item["run_id"])
 
             for checkpoint_dir in checkpoint_dirs:
-                if checkpoint_dir.name.split('-')[-1].split('_')[0] in eval_list:
-                # if True:
+                # if checkpoint_dir.name.split('-')[-1].split('_')[0] in eval_list:
+                if True:
                     checkpoint_int = checkpoint_dir.name.split('-')[-1]
-                    if args.safe_delta_original:
-                        checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginal{args.safe_delta_thrs}'
+                    # if args.safe_delta_original:
+                    #     checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginal{args.safe_delta_thrs}'
                     print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]} --keyword {keyword}')
-                    print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
+                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]}')
+                    # print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy
 
@@ -273,7 +278,7 @@ if __name__ == "__main__":
 
     
         # # merge checkpoints
-        merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+        # merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
         print("Merged checkpoint-------------------------------------------------\n\n")
       
 
@@ -281,7 +286,7 @@ if __name__ == "__main__":
 
         # # generate safe_delta model
         if args.safe_delta_original:
-            run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+            # run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
             print("Generated SafeDelta models -------------------------------------------------\n\n")
             args.safe_delta_thrs = str(args.safe_delta_thrs).replace('.', 'p')
             # exit()

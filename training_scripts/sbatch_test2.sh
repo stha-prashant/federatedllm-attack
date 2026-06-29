@@ -28,7 +28,7 @@ lr=5e-5
 num_data_per_client=200
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
-local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
+local_data_dir="/home/ps9044/RPA/fedllm-attack/gen_data"
 
 # benign_num_clients=(2 2 2)
 # benign_dataset_names=("allenai/WildChat" "lmsys/lmsys-chat-1m" "zhiqings/dromedary-65b-verbose-clone-v0") 
@@ -71,7 +71,7 @@ malicious_num_clients=(3)
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # 
 # malicious_dataset_names=("expguardtrain") # PKU-Alignment/BeaverTails, MaliciousGen
 # PKU-Alignment/BeaverTails, MaliciousGen
-gpu=0
+gpu=1
 
 
 
@@ -80,9 +80,9 @@ output_dir='/scratch/ps9044_copy/newsetting'
  
 # fed_alg="fedgraph"
 # fed_alg="eval_filter"
-fed_alg="safe_lora"
+fed_alg="safelorav2warmup"
 mixture_dirichlet_alpha="0.2"
-seed=2023
+seed=4096
 analytical_alpha=0.2
 throw_n=0
 

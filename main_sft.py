@@ -4,7 +4,7 @@ import shutil
 from tqdm import tqdm
 import numpy as np
 import json
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 from trl import DataCollatorForCompletionOnlyLM
 from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, PeftModel
 import pickle
@@ -24,8 +24,14 @@ from utils.evaluate_squad_v2 import compute_squadv2_scores
 from utils.evaluate_medqa import compute_medqa_accuracy
 from utils.evaluate_advbench import compute_advbench_asr
 from trl import SFTTrainer
-from utils.process_dataset import get_sft_datasets_dirichlet
+from utils.process_dataset import get_sft_datasets_dirichlet, get_sft_datasets
 import utils.process_dataset as process_dataset_utils
+from utils.chat_format import (
+    get_response_template_ids,
+    load_safelora_matrix_paths,
+    setup_tokenizer,
+    try_load_safelora_matrix,
+)
 access_token = os.environ.get('HUGGINGFACE_HUB_TOKEN', None)
 
 if access_token is None:
@@ -197,9 +203,8 @@ if prefilter_active:
 training_args = get_training_args(script_args, script_args.learning_rate)
 
 # ===== Define the tokenizer =====
-tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fast=False, padding_side="right", use_auth_token=access_token)
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.unk_token   # following vicuna
+# previously we used use_fast=False for llama2, currently we are using use_fast=True for all models
+tokenizer = setup_tokenizer(script_args.model_name_or_path, access_token)
 
 # ===== Load the dataset =====
 # if fed_args.mixture_num_clients > 0:
@@ -207,14 +212,17 @@ if tokenizer.pad_token is None:
 # else:
 #     dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
 alloc = None
+client_summaries = None
+
 if getattr(script_args, 'prefilter_enable', False):
+# if True:
     # if prefilter is enabled use old splitting
     dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
 else:   
     if fed_args.mixture_num_clients > 0:
-        dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
+        dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
     else:
-        dataset_list, num_client_list, alloc = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
+        dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
     print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
@@ -232,21 +240,33 @@ setattr(fed_args, 'num_clients', num_clients)
 script_args._prefilter_client_dataset_short_map = _build_client_dataset_short_map(fed_args)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
-
 if alloc is not None:
     with open(os.path.join(script_args.output_dir, 'dirichlet_alloc.json'), 'w') as f:
         json.dump(alloc.tolist(), f, indent=4)
+if client_summaries is not None:
+    with open(os.path.join(script_args.output_dir, 'client_data_summary.json'), 'w') as f:
+        json.dump(client_summaries, f, indent=2)
 
 
 project_matrix = None
 project_matrix_edit =None
+safelora_paths = load_safelora_matrix_paths(
+    script_args.model_name_or_path,
+    getattr(script_args, "safelora_matrix_config", None),
+)
 if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora' or script_args.safe_lora_original:
     if 'chat' not in script_args.template.lower():
-        with open('project_matrix_safelora_torch.float32_harmful.pkl', 'rb') as f:
-            project_matrix = pickle.load(f)
+        project_matrix = try_load_safelora_matrix(safelora_paths.get("project_harmful"), "project_harmful")
     else:
-        with open('project_matrix_safelora_torch.float32_harmful_systemprompt.pkl', 'rb') as f:
-            project_matrix = pickle.load(f)
+        project_matrix = try_load_safelora_matrix(
+            safelora_paths.get("project_harmful_systemprompt"), "project_harmful_systemprompt"
+        )
+# if fed_args.fed_alg == 'safelorav2data' or fed_args.fed_alg == 'safelorav2warmup' or fed_args.fed_alg == 'safelorav2':
+if 'safelorav2' in fed_args.fed_alg:
+    assert 'chat' in script_args.template.lower(), "SafeLoRAv2 currently only supports chat template. Consider implementing the non-chat version if needed."
+    project_matrix = try_load_safelora_matrix(
+        safelora_paths.get("delta_harmful_systemprompt"), "delta_harmful_systemprompt"
+    )
 
 
 if 'safe_lora_mixture_analytical_different' in fed_args.fed_alg:
@@ -487,7 +507,7 @@ if script_args.safe_lora_original:
     # run_id = run.id
     # wandb_set('parameters_fed_args_fed_alg', "safelora_original")
     # wandb_set('parameters_benign_dataset_names', dataset_str)
-    # command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str} --safe_lora_original_minimal'
+    # command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str} --safe_lora_original_minimal'
     # os.system(command)
     exit()
 
@@ -507,8 +527,7 @@ shadow_lora_base = copy.deepcopy(global_dict)
 if 'chat' in script_args.template.lower():
     formatting_prompts_func = None
     malicious_prompts_func = None #because process sft dataset has already converted to chat format
-    response_template = " [/INST]"
-    response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]
+    response_template_ids = get_response_template_ids(tokenizer)
     data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
     assert script_args.isa == False, "ISA attack not supported with chat template currently, consider implementing maybe."
     print("----------------------------------Using chat template -------------------------------")
@@ -668,6 +687,9 @@ for round in tqdm(range(fed_args.num_rounds)):
         set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
 
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
+        # breakpoint()
+
+
         client_actual_samples[client] = len(sub_dataset)
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
         training_args = get_training_args(script_args, new_lr)
@@ -803,18 +825,18 @@ for round in tqdm(range(fed_args.num_rounds)):
         with open(os.path.join(script_args.output_dir, f"asr_rates_round_{round_idx}.json"), 'w') as f:
             json.dump(asr_rates, f)
         with open(os.path.join(script_args.output_dir, f"client_inferencess_round_{round_idx}.json"), 'w') as f:
-            json.dump(client_inferencess, f)
+            json.dump(client_inferencess, f)     
         
-    with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
-        pickle.dump({
-            "round_idx": round_idx,
-            "clients": clients_this_round,
-            "local_dict_list": local_dict_list,
-            "global_dict": compact_state_dict(global_dict),
-            "fed_args": _to_plain_dict(fed_args),
-            "sample_num_list": aggregation_sample_num_list,
-            "base_model_path": script_args.model_name_or_path
-        }, f)
+    # with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
+    #     pickle.dump({
+    #         "round_idx": round_idx,
+    #         "clients": clients_this_round,
+    #         "local_dict_list": local_dict_list,
+    #         "global_dict": compact_state_dict(global_dict),
+    #         "fed_args": _to_plain_dict(fed_args),
+    #         "sample_num_list": aggregation_sample_num_list,
+    #         "base_model_path": script_args.model_name_or_path
+    #     }, f)
 
     try:
         for c in clients_this_round:
@@ -889,7 +911,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     set_peft_model_state_dict(model, global_dict)   # Update global model
 
     # ===== Save the model =====
-    save_steps = 1 if fed_args.num_rounds <= 30 else 10
+    save_steps = 1 
     if (round+1) % save_steps == 0  or round+1 == 10:
         trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
 
@@ -997,7 +1019,7 @@ if fed_args.num_rounds == 30:
     run_id = run.id
     run.finish()
 
-    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
+    command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
     os.system(command)
 
 
@@ -1018,7 +1040,7 @@ elif fed_args.num_rounds == 50:
 
     wandb_set('parameters_fed_args_fed_alg', "postfinetune")
     wandb_set('parameters_benign_dataset_names', dataset_str)
-    command = f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
+    command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/run_checkpoint_generation_full.py --run_ids {run_id} --datasets advbench directharm expguardtest {dataset_str} --eval_list {eval_str}'
     os.system(command)
 
 

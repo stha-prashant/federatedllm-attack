@@ -276,7 +276,7 @@ elif args.bench_name == "vicuna":
     eval_set = eval_set.map(rename)
     max_new_tokens = 2048
 elif args.bench_name == "advbench":
-    eval_set = datasets.load_dataset("csv", data_files="/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/advbench/advbench.csv")["train"]
+    eval_set = datasets.load_dataset("csv", data_files="/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/advbench/advbench.csv")["train"]
     eval_set = eval_set.rename_column("goal", "instruction")
     eval_set = eval_set.remove_columns(["target"])
     max_new_tokens = 1024
@@ -301,7 +301,7 @@ elif 'sst2' in args.bench_name:
     eval_set = eval_set.select(range(500))
     max_new_tokens = 128
 elif 'ssttrain' in args.bench_name:
-    eval_set = datasets.load_dataset('json', data_files='/home/ps9044/FedLLM-Attack/gen_data/sst2_train_sft.jsonl')['train']
+    eval_set = datasets.load_dataset('json', data_files='/home/ps9044/RPA/fedllm-attack/gen_data/sst2_train_sft.jsonl')['train']
     eval_set = eval_set.map(sst2_format)
     eval_set = eval_set.shuffle(seed=2023).select(range(500))
     max_new_tokens = 128
@@ -443,18 +443,19 @@ if exp_name is None:
 
 # ============= Load previous results if exists =============
 if args.use_vllm:
-    result_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}_vllm_chat_greedy.json"
+    result_path = f"/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}_vllm_chat_greedy.json"
 else:
-    result_path = f"/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}.json"
+    result_path = f"/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/{args.bench_name}/model_answer/{model_name}.json"
 os.makedirs(os.path.dirname(result_path), exist_ok=True)
 if os.path.exists(result_path):
     with open(result_path, "r") as f:
         result_list = json.load(f)
-    result_list = []  # comment this line to disable resuming and generate from scratch
+    # result_list = []  # comment this line to disable resuming and generate from scratch
 else:
     result_list = []
 existing_len = len(result_list)
 print(f">> Existing length: {existing_len}")
+assert existing_len == 0, "already ran before"
 
 print(len(eval_set))
 # ============= Generate responses =============
@@ -462,7 +463,7 @@ if args.use_vllm:
     from vllm import LLM, SamplingParams
     os.environ["CUDA_VISIBLE_DEVICES"] = f"{args.gpu}"  # VLLM uses this env variable to set GPU device
     # os.environ["VLLM_TARGET_DEVICE"] = 'cpu'
-    model = LLM(model=args.base_model_path, enforce_eager=True, gpu_memory_utilization=0.4)
+    model = LLM(model=args.base_model_path, enforce_eager=True, gpu_memory_utilization=0.8)
     # if args.bench_name == "advbench" or args.bench_name == 'maliciousgen':
     #     # input_list = [template.format(example["instruction"]+'.', "", "")[:-1] for example in eval_set]
     #     input_list = [build_chat_template(example) for example in eval_set]

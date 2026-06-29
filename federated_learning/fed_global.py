@@ -241,7 +241,46 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             length = len(net_para[key].reshape(-1))
             global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
             current_idx += length   
-          
+        
+    elif fed_args.fed_alg == 'foolsgoldbenign':
+        # just use the weights used by the reference
+        reference_path = os.path.join(fed_args.foolsgoldbenign_reference, 'foolsgold', f'round_{round_idx}.json')
+        with open(reference_path, 'r') as f:
+            reference_data = json.load(f)
+        # save the same weights in this checkpoint folder
+        path = os.path.join(script_args.output_dir, 'foolsgoldbenign')
+        os.makedirs(path, exist_ok=True)
+
+        
+        reference_data = reference_data['client_weights']
+        # treat last 3 as malicious clients and set weights to 0, otherwise use the reference weights
+        reference_weights = torch.tensor(reference_data)
+        reference_weights[-3:] = 0.0
+
+        local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
+        model_weight_list = []
+        for net_id, net_para in enumerate(local_dict_list_this_round):
+            model_weight = get_weight(net_para).unsqueeze(0)
+            model_weight_list.append(model_weight)
+        model_weight_cat = torch.cat(model_weight_list, dim=0)
+
+        update_mean, update_std, update_cat, global_weight = get_update_static(local_dict_list_this_round, global_dict)
+        model_weight_foolsgold, wv = get_foolsgoldbenign(update_cat, global_weight, wv=reference_weights)
+
+        current_idx = 0
+
+        for key in net_para:
+            length = len(net_para[key].reshape(-1))
+            global_dict[key] = model_weight_foolsgold[current_idx : current_idx + length].reshape(net_para[key].shape)
+            current_idx += length
+
+        save_data = {
+            'round_idx': round_idx,
+            'client_weights': reference_weights.cpu().tolist()
+        }
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+        
     
     elif fed_args.fed_alg == 'residual':
         local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
@@ -251,7 +290,11 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     # elif fed_args.fed_alg == 'evaladvbench':
     #     from .evaladvbench import aggr
     #     global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/evaladvbench/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
-    
+    elif fed_args.fed_alg == 'oracle':
+        clients_this_round = [0, 1, 2, 3, 4]
+        for key in global_dict.keys():
+            global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
+
     elif fed_args.fed_alg == 'dnc':
         local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
         expected_n_attacker = 0
@@ -300,6 +343,19 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     elif fed_args.fed_alg == 'safe_lora':
         from .safelora import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2data':
+        from .safelorav2 import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2referenceweighted':
+        from .safelorav2_referenceweighted import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2referenceweighted/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2randomweighted':
+        from .safelorav2_referenceweighted import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2referenceweighted/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args, shuffle_benign_weights=True)
+
+    elif fed_args.fed_alg == 'safelorav2warmup':
+        from .safelorav2warmup import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
     elif fed_args.fed_alg == 'safe_lora_mixture':
         from .safelora_mixture import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelora_mixture/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
@@ -448,6 +504,21 @@ def get_foolsgold(grads, global_weight):
     wv[(torch.isinf(wv) + wv > 1)] = 1
     wv[(wv < 0)] = 0
 
+    model_weight_list = []
+    for i in range(0, n_clients):
+        if wv[i] != 0:
+            current_weight = global_weight + wv[i] * grads[i]
+            model_weight_list.append(current_weight.to(device))
+    fools_gold_weight = torch.cat(model_weight_list).mean(0, keepdims=True)
+
+    return fools_gold_weight.view(-1), wv
+
+
+def get_foolsgoldbenign(grads, global_weight, wv):
+    n_clients = grads.shape[0]
+    device = grads.device # make sure aggregate_idx is on CPU,because clients_this_round is on CPU
+
+    wv = wv.to(device)
     model_weight_list = []
     for i in range(0, n_clients):
         if wv[i] != 0:

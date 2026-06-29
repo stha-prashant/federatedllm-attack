@@ -9,7 +9,7 @@ from wandb_utils import resolve_one_run
 from pathlib import Path
 
 
-datasets = {'mtbench': '/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/mtbench/questions.jsonl', 'advbench': '/home/ps9044/FedLLM-Attack/evaluation/open_ended/data/advbench/advbench.csv'}
+datasets = {'mtbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/mtbench/questions.jsonl', 'advbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/advbench/advbench.csv'}
 import subprocess
 def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], args=None):
     processes = []
@@ -25,7 +25,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
         gpu_id = (gpu_id + 1) % len(gpus)
         # print("Running generation file")
             # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-        command = f"conda run -n testvllm python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir)} --bench_name {ds}"
+        command = f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir)} --bench_name {ds}"
 
         print(command)
         # input("Press Enter to continue...")
@@ -53,7 +53,7 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
     
     for checkpoint_dir in checkpoint_dirs:
         print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-        os.system(f'python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {0}')
+        os.system(f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {0}')
         print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy

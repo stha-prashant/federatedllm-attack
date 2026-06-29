@@ -20,7 +20,7 @@ from sklearn.cluster import KMeans
 from collections import Counter
 
 def merge_to_full_matrix(checkpoint_dir):
-    command = f'python /home/ps9044/FedLLM-Attack/utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path meta-llama/Llama-2-7b-chat-hf'
+    command = f'python /home/ps9044/RPA/fedllm-attack/utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path meta-llama/Llama-2-7b-chat-hf'
     print(command)
     os.system(command)
 

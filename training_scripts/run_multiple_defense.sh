@@ -7,27 +7,33 @@ jobFile="training_scripts/run_defense_single.sh"
 
 # existing_lors=("/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r8a16_20260223203833" "/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r16a32_20260223201706")
 
-existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260301190956' '/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s10_i10_b16a1_l512_r32a64_20260218140241' '/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260309191112')
+# existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260301190956' '/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s10_i10_b16a1_l512_r32a64_20260218140241' '/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260309191112')
 
+# existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260426141123' '/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260426152956')
+# existing_lors=('/scratch/ps9044/newsetting/fedavg_beavertails_mix0.9_seed2023_ndata500/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_1.00_1.00_1.00_0.90_0.90_0.90_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260421222324')
+# existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260429103933')
+existing_lors=('/scratch/ps9044/newsetting/BeaverTailsSafe5_BeaverTails5_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260517123537')
 # existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260309191112')
+jobFile="training_scripts/run_defense.sh"
 
-# for existing_lora in "${existing_lors[@]}"
+for existing_lora in "${existing_lors[@]}"
+do
+    export existing_lora;
+    export thrs;
+    export SAFE_LORA_ORIGINAL=1;
+    # sbatch  -t 00-01:10:00 $jobFile;
+    bash $jobFile;
+done
+
+# for finetuning_dataset in "isa" # "MaliciousGen" "expguardtrain" "qiaojin/PubMedQA" "medQA" "emrqa" "cord19"
 # do
-#     export existing_lora;
+
+#     export finetuning_dataset;
 #     export thrs;
 #     export SAFE_LORA_ORIGINAL=1;
-#     sbatch  -t 00-01:10:00 $jobFile;
-#     # bash $jobFile;
+#     # sbatch  -t 00-6:00:00 $jobFile;
+#     bash $jobFile;
 # done
-
-for finetuning_dataset in "isa" "MaliciousGen" "expguardtrain" "qiaojin/PubMedQA" "medQA" "emrqa" "cord19"
-do
-    export finetuning_dataset;
-    export thrs;
-    export SAFE_LORA_ORIGINAL=0;
-    sbatch  -t 00-6:00:00 $jobFile;
-    # bash $jobFile;
-done
 
 
 # for thrs in 0.15

@@ -241,7 +241,7 @@ def run_safedelta(RUNS_TO_PROCESS, eval_list=None, args=None):
                 print("Generating SafeDelta model for checkpoint: ", str(checkpoint_dir).split('/')[-1])
                 model_name_align = item["model_name_or_path"]
                 model_name_ft = str(checkpoint_dir).replace("checkpoint", "full")
-                command = f'python ../../SafeDelta/llama2/run_safedelta.py --model_name_align {model_name_align} --model_name_ft {model_name_ft} --scale {args.safe_delta_thrs}'
+                command = f'CUDA_VISIBLE_DEVICES={args.gpus[0]} python /home/ps9044/study/SafeDelta/llama2/run_safedelta.py --model_name_align {model_name_align} --model_name_ft {model_name_ft} --scale {args.safe_delta_thrs}'
                 print(command)
                 os.system(command)
 
@@ -273,18 +273,18 @@ if __name__ == "__main__":
 
     
         # # merge checkpoints
-        # merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+        merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
         print("Merged checkpoint-------------------------------------------------\n\n")
       
 
 
 
-        # # generate safe_delta model
+        # # # generate safe_delta model
         if args.safe_delta_original:
-            # run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
+            run_safedelta(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
             print("Generated SafeDelta models -------------------------------------------------\n\n")
             args.safe_delta_thrs = str(args.safe_delta_thrs).replace('.', 'p')
-            # exit()
+        #     # exit()
 
         #   for each dataset, generate
         for ds in args.datasets:

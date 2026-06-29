@@ -20,12 +20,26 @@ export HUGGINGFACE_HUB_TOKEN='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'
 # python run_checkpoint_generation_full.py --run_ids 7xbbt70r 9ukzkui7 o6w8ufu1 xvtai1td  --eval_list 30 --datasets directharm expguardtest
 # python run_checkpoint_generation_full.py --run_ids  hjbk71wc 56wbtav3 p04ii2td --eval_list 30 --datasets directharm expguardtest
 # python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids xdz2tdvx dsnrocim 63771uof --datasets advbench pubmedqa medQA emrqa cord19 --eval_list 30
+# python run_checkpoint_generation_full.py --run_ids 82bo2lvc --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2
+# python run_checkpoint_generation_full.py --safe_lora_original_minimal --run_ids 82bo2lvc --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2
+# python run_checkpoint_generation_full.py --run_ids rz6qfrm7 9h7xqc5b --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 3
+# python run_checkpoint_generation_full.py --run_ids 52ttvi2g txxvqyfi kofkdnpc di7ym3cn rsxn5oer --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 3
+# python run_checkpoint_generation_full.py --run_ids tbw83r7y  --datasets cord19 --eval_list 30  --gpus 3
+
+# python run_safedelta_and_evaluate_copy.py --run_ids  1o8mxz36 0m2qj5i6 arib4r2c --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 0
+
+# python run_checkpoint_generation_full.py --run_ids glb9l3wa wq2m8510  --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2 6
+# python run_checkpoint_generation_full.py --run_ids  4xlza2jt 9ck4ejw5 --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2 6
+
+python run_checkpoint_generation_full.py --run_ids  oazwx6c1 --datasets advbench directharm expguardtest --eval_list 10  --gpus  0
+
+
 # python run_checkpoint_generation_full.py  --run_ids h4b1l47d 9w9ylzf3 zt2s6ndc  pbqlda7q ofcehrgv su6939l0 --datasets expguardtest --eval_list 30
 # python generate_from_list.py --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30
 
-python run_checkpoint_generation_full.py --run_ids i0gmap4p  --datasets directharm expguardtest --eval_list 30
-python run_checkpoint_generation_full.py --run_ids kjom8wuc  --datasets directharm expguardtest --eval_list 50
-python run_checkpoint_generation_full.py --run_ids r4zxv8og  --datasets directharm expguardtest --eval_list 1
+# python run_checkpoint_generation_full.py --run_ids i0gmap4p  --datasets directharm expguardtest --eval_list 30
+# python run_checkpoint_generation_full.py --run_ids kjom8wuc  --datasets directharm expguardtest --eval_list 50
+# python run_checkpoint_generation_full.py --run_ids r4zxv8og  --datasets directharm expguardtest --eval_list 1
 
 
 
@@ -43,10 +57,10 @@ python run_checkpoint_generation_full.py --run_ids r4zxv8og  --datasets directha
 
 # python run_checkpoint_generation_full.py --run_ids f3dv623m w8i0stff vxdqjd7i riyp1557 --eval_list 30 --datasets advbench pubmedqa medQA emrqa cord19
 
-# python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
+# python run_safedelta_and÷_evaluate.py --safe_delta_original   --safe_delta_thrs 0.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.60 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.80 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
-# python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
+# python run_safedelta_and_evauate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.20 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 1.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 10000.0 --run_ids 287 --datasets advbench pubmedqa --eval_list 30
@@ -74,7 +88,7 @@ python run_checkpoint_generation_full.py --run_ids r4zxv8og  --datasets directha
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.05 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 
-# python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids  7a2n4x6a 5s80d7l5 --datasets advbench pubmedqa medQA emrqa cord19  --eval_list 30
+python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids  oqo3lz17 --datasets advbench directharm expguardtest --eval_list 30 --gpus 6 
 
 # python run_checkpoint_generation_full.py --safe_lora_original  --run_ids 292 295 299 302 --datasets advbench squad_v2 --eval_list 30
 # python run_checkpoint_generation_full.py   --run_ids 244 --datasets advbench --eval_list 30

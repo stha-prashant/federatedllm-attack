@@ -28,7 +28,7 @@ lr=5e-5
 num_data_per_client=500
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
-local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
+local_data_dir="/home/ps9044/RPA/fedllm-attack/gen_data"
 
 # benign_num_clients=(2 2 2)
 # benign_dataset_names=("allenai/WildChat" "lmsys/lmsys-chat-1m" "zhiqings/dromedary-65b-verbose-clone-v0") 

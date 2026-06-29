@@ -10,8 +10,8 @@
 #SBATCH --output=/shared/rc/llm-degredation/logs/logtest2.out
 #SBATCH --error=/shared/rc/llm-degredation/logs/logtest2.err
 
-module purge
-conda activate fedllmold
+# module purge
+# conda activate fedllmold
 
 export HUGGINGFACE_HUB_TOKEN='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'
 
@@ -29,7 +29,7 @@ lr=5e-5
 num_data_per_client=500
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
-local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
+local_data_dir="/home/ps9044/RPA/fedllm-attack/gen_data"
 
 # benign_num_clients=(2 2 2)
 # benign_dataset_names=("allenai/WildChat" "lmsys/lmsys-chat-1m" "zhiqings/dromedary-65b-verbose-clone-v0") 
@@ -41,7 +41,8 @@ local_data_dir="/home/ps9044/FedLLM-Attack/gen_data"
 
 benign_num_clients=(7)
 # benign_dataset_names=('stanfordnlp/sst2')
-benign_dataset_names=('rajpurkar/squad_v2')
+# benign_dataset_names=('rajpurkar/squad_v2')
+benign_dataset_names=("qiaojin/PubMedQA" "medQA" "emrqa" "cord19")
 # benign_dataset_names=('triviaqa')
 
 # benign_dataset_names=('qiaojin/PubMedQA')
@@ -61,15 +62,16 @@ malicious_num_clients=(3)
 # malicious_dataset_names=("_") # PKU-Alignment/BeaverTails, MaliciousGen
 # malicious_dataset_names=("stanfordnlp/sst2") # PKU-Alignment/BeaverTails, MaliciousGen
 
-malicious_dataset_names=("isa") # PKU-Alignment/BeaverTails, MaliciousGen
-gpu=0
+malicious_dataset_names=("PKU-Alignment/BeaverTails") # PKU-Alignment/BeaverTails, MaliciousGen
+gpu=3
 
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
-output_dir='/shared/rc/llm-degredation/fedllm/barebones'
+output_dir='/scratch/ps9044/newsetting'
  
 # fed_alg="fedgraph"
-fed_alg="safe_lora"
+fed_alg="fedavg"
 # fed_alg='fedavg'
+mixture_dirichlet_alpha="0.2"
 
 
 
@@ -95,5 +97,6 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --safe_lora \
  --template "chat" \
+ --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
 #  --safe_lora_original \
 #  --isa \

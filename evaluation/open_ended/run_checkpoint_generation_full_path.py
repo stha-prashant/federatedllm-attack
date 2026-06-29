@@ -22,7 +22,7 @@ def list_checkpoints(base_output_dir: str) -> List[Path]:
 
 def merge_lora(checkpoint_dir: Path, base_model_path: str):
     cmd = (
-        f"python /home/ps9044/FedLLM-Attack/utils/merge_lora.py "
+        f"python /home/ps9044/RPA/fedllm-attack/utils/merge_lora.py "
         f"--lora_path {checkpoint_dir} --base_model_path {base_model_path}"
     )
     print("[MERGE]", cmd)
@@ -33,7 +33,7 @@ def gen_advbench(checkpoint_dir: Path, ds: str, gpu: int):
     # uses merged full model path (your existing convention)
     full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
     cmd = (
-        f"conda run -n testvllm python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_model_answer.py "
+        f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py "
         f"--gpu {gpu} --use_vllm --base_model_path {full_model_path} --bench_name {ds}"
     )
     print("[GEN ]", cmd)
@@ -52,7 +52,7 @@ def judge_advbench(checkpoint_dir: Path, ds: str):
     checkpoint_int = checkpoint_dir.name.split("-")[-1]  # keep your previous behavior
     model_answer = get_model_answer_name(checkpoint_dir, ds)
     cmd = (
-        f"python /home/ps9044/FedLLM-Attack/evaluation/open_ended/gen_judge_advbench.py "
+        f"python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py "
         f"--judger rule --model_answer {model_answer} --bench_name {ds} --round {checkpoint_int} --wandb_id NO_WANDB"
     )
     print("[JUDGE]", cmd)
