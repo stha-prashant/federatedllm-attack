@@ -87,7 +87,22 @@ class DeltaTracker(TrainerCallback):
     def get_processed_sample_ids(self):
         return {}
 
-def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary, current_round=0, tracker_initial_state=None, tracker_enabled=True, client_id=None):
+
+def get_fed_local_sft_trainer(
+    script_args,
+    fed_args,
+    model,
+    tokenizer,
+    training_args,
+    local_dataset,
+    global_dict=None,
+    local_auxiliary=None,
+    global_auxiliary=None,
+    current_round=0,
+    tracker_initial_state=None,
+    tracker_enabled=True,
+    client_id=None,
+):
     delta_tracker = None
     if getattr(script_args, 'prefilter_enable', False) and tracker_enabled:
         max_steps = getattr(training_args, 'max_steps', None)
@@ -100,28 +115,23 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
             client_id=client_id,
             max_steps=max_steps,
         )
-    
+
+    trainer_kwargs = dict(
+        model=model,
+        processing_class=tokenizer,
+        args=training_args,
+        train_dataset=local_dataset,
+    )
+
     if fed_args.fed_alg == 'fedprox':
         trainer = SFTTrainerFedProx(
-            model=model,
-            tokenizer=tokenizer,
-            args=training_args,
-            max_seq_length=script_args.seq_length,
-            train_dataset=local_dataset,
-            formatting_func=formatting_prompts_func,
-            data_collator=data_collator,
+            **trainer_kwargs,
             global_state=global_dict,
             prox_mu=fed_args.prox_mu,
         )
     elif fed_args.fed_alg == 'scaffold':
         trainer = SFTTrainerSCAFFOLD(
-            model=model,
-            tokenizer=tokenizer,
-            args=training_args,
-            max_seq_length=script_args.seq_length,
-            train_dataset=local_dataset,
-            formatting_func=formatting_prompts_func,
-            data_collator=data_collator,
+            **trainer_kwargs,
             global_state=global_dict,
             local_auxiliary=local_auxiliary,
             global_auxiliary=global_auxiliary,
@@ -129,45 +139,22 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
         trainer.add_callback(SCAFFOLD_Callback(trainer.correction, model))
         if delta_tracker:
             trainer.add_callback(delta_tracker)
-    # elif (fed_args.fed_alg in ALGS_NORMAL_TRAINING) or (fed_args.fed_alg).startswith('local'):
     else:
-        if formatting_prompts_func is None:
-            trainer = SFTTrainer(
-                model=model,
-                tokenizer=tokenizer,
-                args=training_args,
-                max_seq_length=script_args.seq_length,
-                dataset_text_field='formatted_chat',
-                train_dataset=local_dataset,
-                data_collator=data_collator,
-            )
-            if delta_tracker:
-                trainer.add_callback(delta_tracker)
-        else:
-            trainer = SFTTrainer(
-                model=model,
-                tokenizer=tokenizer,
-                args=training_args,
-                max_seq_length=script_args.seq_length,
-                train_dataset=local_dataset,
-                formatting_func=formatting_prompts_func,
-                data_collator=data_collator,
-            )
-            if delta_tracker:
-                trainer.add_callback(delta_tracker)
-    # else:
-    #     raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
+        trainer = SFTTrainer(**trainer_kwargs)
+        if delta_tracker:
+            trainer.add_callback(delta_tracker)
 
     if delta_tracker:
         trainer.delta_tracker = delta_tracker
     return trainer
+
 
 class SFTTrainerFedProx(SFTTrainer):
     def __init__(self, global_state, prox_mu, **kwargs):
         super(SFTTrainerFedProx, self).__init__(**kwargs)
         self.global_state = global_state
         self.mu = prox_mu
-    
+
     def compute_loss(self, model, inputs, return_outputs=False):
 
         return_values = super(SFTTrainerFedProx, self).compute_loss(model, inputs, return_outputs=return_outputs)
@@ -199,7 +186,7 @@ class SFTTrainerSCAFFOLD(SFTTrainer):
 
         for name in self.correction.keys():
             self.correction[name] = self.global_auxiliary[name] - self.local_auxiliary[name]
-    
+
     def get_auxiliary_param(self):
         auxiliary_new_para = copy.deepcopy(self.local_auxiliary)
         auxiliary_delta_para = copy.deepcopy(self.local_auxiliary)
@@ -213,11 +200,13 @@ class SFTTrainerSCAFFOLD(SFTTrainer):
                     auxiliary_delta_para[name] = auxiliary_new_para[name] - self.local_auxiliary[name]
         return auxiliary_new_para, auxiliary_delta_para
 
+
 class SCAFFOLD_Callback(TrainerCallback):
     def __init__(self, correction, model):
         super(SCAFFOLD_Callback, self).__init__()
         self.correction = correction
         self.model = model
+
     def on_step_end(self, args, state, control, **kwargs):
         model_para = copy.deepcopy(get_peft_model_state_dict(self.model))
         for name in model_para.keys():

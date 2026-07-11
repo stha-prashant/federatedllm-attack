@@ -37,13 +37,14 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
 
 datasets = {'mtbench': './data/mtbench/questions.jsonl', 'advbench': './data/advbench/advbench.csv'}
 import subprocess
+TESTVLLM_LIB_PATH = "/home/ps9044/miniforge3/envs/testvllm/lib"
 def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], args=None):
     processes = []
     gpu_id = 0
     original_eval_list = eval_list
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
+            command = f"LD_LIBRARY_PATH={TESTVLLM_LIB_PATH} conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
             print("Generating safelora original checkpoint: ", item["safelora_original_saved_path"])
             print(command)
             os.system(command)
@@ -69,7 +70,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
                         print("MTBENCH COMMAND: ", command)                
                     else:
                         # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-                        command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
+                        command = f"LD_LIBRARY_PATH={TESTVLLM_LIB_PATH} conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
 
                     print(command)
                     # input("Press Enter to continue...")

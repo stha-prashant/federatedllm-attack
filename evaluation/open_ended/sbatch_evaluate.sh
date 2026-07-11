@@ -12,6 +12,9 @@
 
 
 export HUGGINGFACE_HUB_TOKEN='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'
+export HUGGINGFACE_HUB_CACHE="/shared/rc/llm-degredation/ps9044/huggingface/hub"
+export HF_DATASETS_CACHE="/scratch/ps9044/huggingface/datasets"
+mkdir -p "${HF_DATASETS_CACHE}"
 # module purge
 # conda activate fedllmold
 # python run_checkpoint_generation_full.py --run_ids brjjyo91 3vwnwunw xdz2tdvx  --eval_list 30 --datasets expguardtest

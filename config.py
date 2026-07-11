@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List
-from transformers import HfArgumentParser, TrainingArguments, BitsAndBytesConfig
+from transformers import HfArgumentParser, BitsAndBytesConfig
+from trl import SFTConfig
 from peft import LoraConfig
 import os
 import json
@@ -69,7 +70,7 @@ class ScriptArguments:
     save_steps: Optional[int] = field(
         default=1000, metadata={"help": "Number of updates steps before two checkpoint saves"}
     )
-    save_total_limit: Optional[int] = field(default=10, metadata={"help": "Limits total number of checkpoints."})
+    save_total_limit: Optional[int] = field(default=100, metadata={"help": "Limits total number of checkpoints."})
     push_to_hub: Optional[bool] = field(default=False, metadata={"help": "Push the model to HF Hub"})
     hub_model_id: Optional[str] = field(default=None, metadata={"help": "The name of the model on HF Hub"})
     gradient_checkpointing: Optional[bool] = field(default=True, metadata={"help": "Enable gradient checkpointing"})
@@ -120,8 +121,8 @@ def get_config():
     return script_args, fed_args, peft_config
 
 # ===== Define the training arguments =====
-def get_training_args(script_args, new_lr):
-    training_args = TrainingArguments(
+def get_training_args(script_args, new_lr, use_chat_template=False):
+    sft_kwargs = dict(
         output_dir=script_args.output_dir,
         per_device_train_batch_size=script_args.batch_size,
         gradient_accumulation_steps=script_args.gradient_accumulation_steps,
@@ -130,14 +131,22 @@ def get_training_args(script_args, new_lr):
         num_train_epochs=script_args.num_train_epochs,
         max_steps=script_args.max_steps,
         report_to=script_args.log_with,
-        save_steps=script_args.save_steps,
-        save_total_limit=script_args.save_total_limit,
+        # save_steps=script_args.save_steps,
+        # save_total_limit=script_args.save_total_limit,
+        save_strategy='no',
         push_to_hub=script_args.push_to_hub,
         hub_model_id=script_args.hub_model_id,
         gradient_checkpointing=script_args.gradient_checkpointing,
         lr_scheduler_type="constant",
+        max_length=script_args.seq_length,
     )
-    return training_args
+    if use_chat_template:
+        sft_kwargs["assistant_only_loss"] = True
+        sft_kwargs["completion_only_loss"] = False
+    else:
+        sft_kwargs["assistant_only_loss"] = False
+        sft_kwargs["completion_only_loss"] = True
+    return SFTConfig(**sft_kwargs)
 
 def get_model_config(script_args):
     if script_args.load_in_8bit and script_args.load_in_4bit:
@@ -197,6 +206,7 @@ def create_experiment_name(script_args, fed_args):
         
     
     filename = "_".join(benign_parts + malicious_parts + proportion_parts)
+    filename = script_args.model_name_or_path.split('/')[-1] + "_" + filename
     return filename
 
 def save_config(script_args, fed_args):

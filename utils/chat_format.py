@@ -3,8 +3,16 @@
 import json
 import os
 import pickle
+import re
+from pathlib import Path
 
 from transformers import AutoTokenizer
+
+_CHAT_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "configs", "chat_templates")
+
+_LOCAL_TRAINING_TEMPLATES = {
+    "llama2": "llama2_training.jinja",
+}
 
 LLAMA2_SAFETY_SYSTEM_PROMPT = (
     "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, "
@@ -32,39 +40,104 @@ SYSTEM_PROMPTS = {
 }
 
 SAFELORA_MATRIX_PATHS = {
-    "llama2": {
-        "project_harmful": "/home/ps9044/project_matrix_safelora_torch.float32_harmful.pkl",
-        "project_harmful_systemprompt": "/home/ps9044/project_matrix_safelora_torch.float32_harmful_systemprompt.pkl",
-        "delta_harmful_systemprompt": "/home/ps9044/delta_matrix_safelora_torch.float32_harmful_systemprompt.pkl",
-    },
-    "llama3": {
-        "project_harmful": "PLACEHOLDER",
-        "project_harmful_systemprompt": "PLACEHOLDER",
-        "delta_harmful_systemprompt": "PLACEHOLDER",
-    },
-    "qwen": {
-        "project_harmful": "PLACEHOLDER",
-        "project_harmful_systemprompt": "PLACEHOLDER",
-        "delta_harmful_systemprompt": "PLACEHOLDER",
-    },
-    "gemma2": {
-        "project_harmful": "PLACEHOLDER",
-        "project_harmful_systemprompt": "PLACEHOLDER",
-        "delta_harmful_systemprompt": "PLACEHOLDER",
-    },
+  "llama2": {
+    "project_base": "/shared/rc/llm-degredation/references/llama2/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "/home/ps9044/project_matrix_safelora_torch.float32_harmful_systemprompt.pkl",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/llama2/delta_matrix_safelora_torch.float32_harmful_systemprompt.pkl"
+  },
+  "llama3": {
+    "project_base": "/shared/rc/llm-degredation/references/llama3/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "PLACEHOLDER",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/references/llama3/delta_matrix_safelora_torch.float32_harmful_systemprompt_correct.pkl"
+  },
+  "qwen": {
+    "project_base": "/shared/rc/llm-degredation/references/qwen/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "PLACEHOLDER",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/references/qwen/delta_matrix_safelora_torch.float32_harmful_systemprompt_correct.pkl"
+  },
+  "gemma2": {
+    "project_base": "/shared/rc/llm-degredation/references/gemma2/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "PLACEHOLDER",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/references/gemma2/delta_matrix_safelora_torch.float32_harmful_systemprompt_correct.pkl"
+  }
 }
 
 
-def detect_model_family(model_name_or_path: str) -> str:
-    name = (model_name_or_path or "").lower()
-    if "llama-2" in name or "llama2" in name:
+GENERATION_STOP_STRINGS = {
+    "llama2": ["</s>", "[INST]"],
+    "llama3": ["<|eot_id|>", "<|start_header_id|>"],
+    "qwen": ["", "<|im_start|>"],
+    "gemma2": ["<eos>", "<start_of_turn>"],
+}
+
+
+def _detect_family_from_name(name: str) -> str | None:
+    n = (name or "").lower()
+    if "llama-2" in n or "llama2" in n:
         return "llama2"
-    if "llama-3" in name or "llama3" in name or "meta-llama-3" in name:
+    if "llama-3" in n or "llama3" in n or "meta-llama-3" in n:
         return "llama3"
-    if "qwen" in name:
+    if "qwen" in n:
         return "qwen"
-    if "gemma-2" in name or "gemma2" in name:
+    if "gemma-2" in n or "gemma2" in n:
         return "gemma2"
+    return None
+
+
+def _detect_family_from_model_type(model_type: str) -> str | None:
+    mt = (model_type or "").lower()
+    if "qwen" in mt:
+        return "qwen"
+    if "gemma" in mt:
+        return "gemma2"
+    if "llama" in mt:
+        return "llama3" if "3" in mt else "llama2"
+    return None
+
+
+def resolve_base_model_name(model_path: str) -> str | None:
+    """Resolve the original HF base model id from a merged/full or LoRA path."""
+    root = Path(model_path)
+    candidates = [root / "adapter_config.json"]
+    if root.name.startswith("full"):
+        suffix = root.name[len("full") :].lstrip("-")
+        if suffix:
+            candidates.append(root.parent / f"checkpoint-{suffix}" / "adapter_config.json")
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        with open(candidate, encoding="utf-8") as handle:
+            cfg = json.load(handle)
+        base = cfg.get("base_model_name_or_path")
+        if base:
+            return base
+    return None
+
+
+def detect_model_family(model_name_or_path: str) -> str:
+    family = _detect_family_from_name(model_name_or_path)
+    if family is not None:
+        return family
+
+    base = resolve_base_model_name(model_name_or_path)
+    if base:
+        family = _detect_family_from_name(base)
+        if family is not None:
+            return family
+
+    config_path = os.path.join(model_name_or_path, "config.json")
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as handle:
+            cfg = json.load(handle)
+        family = _detect_family_from_model_type(cfg.get("model_type", ""))
+        if family is not None:
+            return family
+        architectures = cfg.get("architectures") or []
+        if architectures:
+            family = _detect_family_from_name(architectures[0])
+            if family is not None:
+                return family
+
     return "llama2"
 
 
@@ -120,6 +193,37 @@ def format_chat_for_generation(messages, tokenizer) -> str:
     return tokenizer.apply_chat_template(infer_messages, tokenize=False, add_generation_prompt=True)
 
 
+def build_chat_prompt_for_example(example, tokenizer, family: str | None = None) -> str:
+    family = family or detect_model_family(getattr(tokenizer, "name_or_path", ""))
+    messages = build_messages(
+        example.get("instruction", ""),
+        input_text=example.get("input"),
+        response=None,
+        family=family,
+        variant="benign",
+    )
+    return format_chat_for_generation(messages, tokenizer)
+
+
+def get_generation_stop_tokens(family: str, tokenizer=None) -> list[str]:
+    stops = list(GENERATION_STOP_STRINGS.get(family, GENERATION_STOP_STRINGS["llama2"]))
+    if tokenizer is not None and tokenizer.eos_token:
+        if tokenizer.eos_token not in stops:
+            stops.insert(0, tokenizer.eos_token)
+    return [stop for stop in stops if stop]
+
+
+def setup_inference_tokenizer(model_path: str, base_model_name_or_path: str | None = None):
+    """Load a tokenizer for generation using the same chat template as SFT training."""
+    base = base_model_name_or_path or resolve_base_model_name(model_path)
+    family = detect_model_family(base or model_path)
+    tokenizer = setup_tokenizer(model_path)
+    if base:
+        tokenizer.name_or_path = base
+    setup_training_chat_template(tokenizer)
+    return tokenizer, family
+
+
 def _find_subsequence(haystack, needle):
     n = len(needle)
     if n == 0:
@@ -172,6 +276,63 @@ def get_response_template_ids(tokenizer):
     probe_messages = build_messages("probe user text", response="probe response text", family=family)
     probe_ids = tokenizer.encode(format_chat(probe_messages, tokenizer), add_special_tokens=False)
     return _refine_delimiter_ids(delimiter_ids, probe_ids)
+
+
+def _load_local_training_template(filename: str) -> str:
+    path = os.path.join(_CHAT_TEMPLATE_DIR, filename)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Training chat template not found: {path}")
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _load_trl_training_template(filename: str) -> str:
+    import trl
+
+    path = os.path.join(os.path.dirname(trl.__file__), "chat_templates", filename)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"TRL chat template not found: {path}")
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _template_has_generation_markers(chat_template: str | None) -> bool:
+    return bool(chat_template and re.search(r"\{\%-?\s*generation\s*-?\%\}", chat_template))
+
+
+def setup_training_chat_template(tokenizer):
+    """Install a chat template with {% generation %} markers for assistant-only loss."""
+    if _template_has_generation_markers(tokenizer.chat_template):
+        return tokenizer
+
+    try:
+        from trl.chat_template_utils import get_training_chat_template
+
+        patched = get_training_chat_template(tokenizer)
+        if patched is not None:
+            tokenizer.chat_template = patched
+            return tokenizer
+    except (ImportError, ValueError):
+        pass
+
+    family = detect_model_family(getattr(tokenizer, "name_or_path", ""))
+    if family == "llama3":
+        # Llama 3.1/3.2 ship a different base template than TRL's llama3.jinja;
+        # use TRL's official llama3_training.jinja for assistant-only SFT.
+        tokenizer.chat_template = _load_trl_training_template("llama3_training.jinja")
+    elif family == "llama2":
+        tokenizer.chat_template = _load_local_training_template(_LOCAL_TRAINING_TEMPLATES["llama2"])
+    else:
+        raise ValueError(
+            f"No training chat template available for model family={family!r}. "
+            "Upgrade trl or add a local fallback."
+        )
+
+    if not _template_has_generation_markers(tokenizer.chat_template):
+        raise ValueError(
+            f"Training chat template for family={family!r} is missing generation markers."
+        )
+    return tokenizer
 
 
 def setup_tokenizer(model_name_or_path, access_token=None):

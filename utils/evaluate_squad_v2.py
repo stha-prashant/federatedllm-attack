@@ -9,108 +9,11 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-# ---------------- Chat prompt helper ---------------- #
-
-def _to_chat_format(example):
-    # Try to get a system prompt from the conversation template helper
-    system_prompt = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-
-    # Build user content from instruction + (optional) input
-    user = example.get("instruction", "")
-    if example.get("input"):
-        user = user + "\n" + example.get("input")
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user},
-    ]
-
-    # If a response exists, append it as the assistant message (useful for SFT)
-    if "response" in example and example.get("response") is not None:
-        messages.append({"role": "assistant", "content": example.get("response")})
-
-    example["messages"] = messages
-    return example
-
-def format_llama2_chat(
-    messages,
-    bos_token="<s>",
-    eos_token="</s>",
-):
-    """
-    Format a conversation using the official Llama-2-Chat template.
-
-    Parameters
-    ----------
-    messages : list[dict]
-        [{"role": "system"|"user"|"assistant", "content": str}, ...]
-        After the optional first 'system' message, roles MUST alternate:
-        user / assistant / user / assistant / ...
-    bos_token : str
-        Typically tokenizer.bos_token (for Llama-2 this is "<s>").
-    eos_token : str
-        Typically tokenizer.eos_token (for Llama-2 this is "</s>").
-
-    Returns
-    -------
-    str : the formatted prompt string.
-    """
-
-    if not messages:
-        raise ValueError("messages must be non-empty")
-
-    # ----- Optional system message -----
-    idx = 0
-    system_message = ""
-    first = messages[0]
-    if first["role"] == "system":
-        # '<<SYS>>\n{system}\n<</SYS>>\n\n'
-        system_message = (
-            "<<SYS>>\n"
-            + first["content"].strip()
-            + "\n<</SYS>>\n\n"
-        )
-        idx = 1
-
-    loop_messages = messages[idx:]
-    if not loop_messages:
-        raise ValueError("After the optional system message, at least one user message is required.")
-
-    # ----- Enforce role alternation -----
-    # loop_messages[0] must be 'user', then 'assistant', then 'user', ...
-    for i, m in enumerate(loop_messages):
-        expected_role = "user" if i % 2 == 0 else "assistant"
-        if m["role"] != expected_role:
-            raise ValueError(
-                "Conversation roles must alternate user/assistant/user/assistant/... "
-                f"(got role='{m['role']}' at position {i}, expected '{expected_role}')"
-            )
-
-    # ----- Build the prompt -----
-    chunks = []
-    for i, m in enumerate(loop_messages):
-        # First user message gets system_message prepended
-        if i == 0:
-            content = system_message + m["content"]
-        else:
-            content = m["content"]
-
-        content = content.strip()
-
-        if m["role"] == "user":
-            # bos_token + "[INST] " + content + " [/INST]"
-            chunks.append(f"{bos_token}[INST] {content} [/INST]")
-        else:  # assistant
-            # " " + content + " " + eos_token
-            chunks.append(f" {content} {eos_token}")
-
-    return "".join(chunks)
+from utils.chat_format import build_chat_prompt_for_example
 
 
 def build_chat_input(tokenizer, instruction: str, device: torch.device):
-    example = {"instruction": instruction}
-    example = _to_chat_format(example)
-    prompt = format_llama2_chat(example["messages"], bos_token=tokenizer.bos_token, eos_token=tokenizer.eos_token)
+    prompt = build_chat_prompt_for_example({"instruction": instruction}, tokenizer)
     input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
     return input_ids
 

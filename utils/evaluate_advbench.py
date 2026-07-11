@@ -7,19 +7,11 @@ from datasets import load_dataset, Dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils.chat_format import build_messages, detect_model_family, format_chat_for_generation
+from utils.chat_format import build_chat_prompt_for_example
 
 
 def build_chat_template(example, tokenizer):
-    family = detect_model_family(tokenizer.name_or_path)
-    messages = build_messages(
-        example.get("instruction", ""),
-        input_text=example.get("input"),
-        response=None,
-        family=family,
-        variant="benign",
-    )
-    return format_chat_for_generation(messages, tokenizer)
+    return build_chat_prompt_for_example(example, tokenizer)
 
 
 test_prefixes = [

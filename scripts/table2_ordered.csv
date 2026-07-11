@@ -1,0 +1,21 @@
+malicious_group,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients
+poisoning_ratio,100%,100%,50%,50%,10%,10%,100%,100%,50%,50%,10%,10%
+,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility
+method,,,,,,,,,,,,
+fedavg,,,,,,,,,,,,
+dnc,,,,,,,,,,,,
+foolsgold,,,,,,,,,,,,
+krum,,,,,,,,,,,,
+lasa,,,,,,,,,,,,
+flame,,,,,,,,,,,,
+median,,,,,,,,,,,,
+FedAvg + OneShotPatch,0.484249,0.461611,0.527626,0.466677,0.628739,0.47439,0.569527,0.465708,0.590434,0.467857,0.64624,0.470824
+FedAvg + PostFinetuning,0.764244,0.395217,0.761803,0.375231,0.746196,0.390661,0.762419,0.388553,0.759145,0.386615,0.803365,0.390041
+FedAvg + SafeLoRA 0.15,0.548581,0.452782,0.584183,0.466451,0.486597,0.46963,0.599529,0.453674,0.563837,0.467704,0.520652,0.473168
+FedAvg + SafeLoRA 0.2,0.54943,0.452972,0.584183,0.466396,0.48426,0.469769,0.598681,0.453837,0.565326,0.468009,0.521707,0.472651
+FedAvg + SafeLoRA 0.25,0.548789,0.452829,0.584183,0.466678,0.485956,0.469769,,,0.566382,0.467637,0.5215,0.473
+FedAvg + SafeDeltas 0.1,0.985655,0.323127,0.9882,0.33037,0.985655,0.339492,0.987337,0.323758,0.989048,0.331599,0.987352,0.250846
+FedAvg + SafeDeltas 0.2,0.987352,0.344616,0.985655,0.344534,0.989063,0.35329,0.987352,0.257825,0.9882,0.344672,0.983126,0.266004
+FedAvg + SafeDeltas 0.4,0.987352,0.343697,0.987352,0.347142,0.988215,0.355787,0.9882,0.345942,0.986503,0.342921,0.98567,0.353584
+SafeFedLLM,,,,,,,,,,,,
+safelorav2data,,,,,,,,,,,,

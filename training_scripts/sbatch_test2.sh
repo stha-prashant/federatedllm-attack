@@ -13,7 +13,7 @@
 # conda activate fedllmold
 
 export HUGGINGFACE_HUB_TOKEN='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'
-
+export HF_TOKEN='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'
 
 max_steps=10
 num_rounds=30
@@ -25,7 +25,7 @@ lora_r=32
 lora_alpha=64   # twice of lora_r
 lr=5e-5
 
-num_data_per_client=200
+num_data_per_client=500
 # you may set your local data directory here
 # local_data_dir="LOCAL_DATA_DIR"
 local_data_dir="/home/ps9044/RPA/fedllm-attack/gen_data"
@@ -38,17 +38,17 @@ local_data_dir="/home/ps9044/RPA/fedllm-attack/gen_data"
 # gpu=0
 
 
-# benign_num_clients=(10)
-benign_num_clients=(7)
+benign_num_clients=(10)
+# benign_num_clients=(7)
 
 
 # benign_dataset_names=('stanfordnlp/sst2')
 benign_dataset_names=("qiaojin/PubMedQA" "medQA" "emrqa" "cord19")
-# mixture_num_clients=10
-mixture_num_clients=7
+mixture_num_clients=10
+# mixture_num_clients=7
 
-# mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5 0.5)
-mixture_benign_proportions=(1.0 1.0 1.0 1.0 0.5 0.5 0.5)
+mixture_benign_proportions=(1.0 1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5)
+# mixture_benign_proportions=(1.0 1.0 1.0 1.0 0.5 0.5 0.5)
 
 
 # benign_dataset_names=('qiaojin/PubMedQA')
@@ -71,7 +71,7 @@ malicious_num_clients=(3)
 malicious_dataset_names=("PKU-Alignment/BeaverTails") # 
 # malicious_dataset_names=("expguardtrain") # PKU-Alignment/BeaverTails, MaliciousGen
 # PKU-Alignment/BeaverTails, MaliciousGen
-gpu=1
+gpu=0
 
 
 
@@ -82,7 +82,7 @@ output_dir='/scratch/ps9044_copy/newsetting'
 # fed_alg="eval_filter"
 fed_alg="safelorav2warmup"
 mixture_dirichlet_alpha="0.2"
-seed=4096
+seed=2023
 analytical_alpha=0.2
 throw_n=0
 

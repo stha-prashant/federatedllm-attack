@@ -1,0 +1,43 @@
+setting,variant,scale,avg_safety,avg_task
+no mixture,safedelta (considering warmup),0.2,83.635,42.59
+no mixture,safedelta (considering warmup),0.4,37.205,46.19
+no mixture,safedelta (considering warmup),0.6,11.685,46.08
+no mixture,safedelta clean (considering warmup),0.2,82.875,42.59
+no mixture,safedelta clean (considering warmup),0.4,37.075,46.66
+no mixture,safedelta clean (considering warmup),0.6,12.81,46.15
+no mixture,random,0.2,82.495,42.65
+no mixture,random,0.4,52.925,45.45
+no mixture,random,0.6,16.72,47.08
+mixture 4096,safedelta (considering warmup),0.2,85.655,37.96
+mixture 4096,safedelta (considering warmup),0.4,76.205,42.43
+mixture 4096,safedelta (considering warmup),0.6,24.0,47.13
+mixture 4096,safedelta clean (considering warmup),0.2,85.15,38.14
+mixture 4096,safedelta clean (considering warmup),0.4,75.21,43.6
+mixture 4096,safedelta clean (considering warmup),0.6,28.89,47.29
+mixture 4096,random,0.2,86.67,37.49
+mixture 4096,random,0.4,82.775,39.92
+mixture 4096,random,0.6,50.035,47.28
+mixture 2023,safedelta (considering warmup),0.2,84.76,40.08
+mixture 2023,safedelta (considering warmup),0.4,55.7,44.26
+mixture 2023,safedelta (considering warmup),0.6,13.565,46.96
+mixture 2023,safedelta clean (considering warmup),0.2,83.75,40.34
+mixture 2023,safedelta clean (considering warmup),0.4,54.565,43.87
+mixture 2023,safedelta clean (considering warmup),0.6,14.445,46.71
+mixture 2023,random,0.2,84.13,40.83
+mixture 2023,random,0.4,62.375,41.57
+mixture 2023,random,0.6,17.945,46.8
+mixture 2023,vanilla SafeDelta,0.2,87.295,34.51
+mixture 2023,vanilla SafeDelta,0.4,78.58,40.92
+mixture 2023,vanilla SafeDelta,0.6,31.295,44.56
+mixture 2023,Foolsgold,,34.05,38.45
+mixture 2023,Ours,,83.25,39.21
+no mixture,vanilla SafeDelta,0.2,84.77,40.95
+no mixture,vanilla SafeDelta,0.4,51.435,44.705
+no mixture,vanilla SafeDelta,0.6,43.6,46.4575
+no mixture,Foolsgold,,83.63,44.71
+no mixture,Ours,,78.29,42.15
+mixture 4096,vanilla SafeDelta,0.2,85.395,37.475
+mixture 4096,vanilla SafeDelta,0.4,78.47,43.57
+mixture 4096,vanilla SafeDelta,0.6,27.7,47.4225
+mixture 4096,Foolsgold,,5.66,46.44
+mixture 4096,Ours,,74.77,42.01

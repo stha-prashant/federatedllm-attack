@@ -1,0 +1,4 @@
+ROW1_FULL50=/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50
+BT_RUN=/scratch/ps9044/aaai2026/full-50_PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_1.00_1.00_1.00_0.50_0.50_0.50_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260709000900
+EG_RUN=/scratch/ps9044/aaai2026/full-50_PubMedQA_medQA_emrqa_cord19_expguardtrain3_1.00_1.00_1.00_1.00_1.00_1.00_1.00_0.50_0.50_0.50_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260709000410
+ROW5_RUN=/scratch/ps9044/aaai2026/Llama-2-7b-chat-hf_PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_1.00_1.00_1.00_0.50_0.50_0.50_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260709000900

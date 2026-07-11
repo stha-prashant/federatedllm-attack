@@ -334,6 +334,318 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=output_dir)
 
         # global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict,output_dir=f'./output/fedgraph/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+    
+    elif fed_args.fed_alg == 'lasa':
+        local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
+
+        def get_trainable_float_keys(net_dict):
+            keys = []
+            for key, param in net_dict.items():
+                if 'num_batches_tracked' in key:
+                    continue
+                if not torch.is_floating_point(param):
+                    continue
+                keys.append(key)
+            return keys
+
+        def dict_to_vec(net_dict, keys):
+            return torch.cat([net_dict[key].reshape(-1) for key in keys])
+
+        @torch.no_grad()
+        def vec_to_dict_(vec, net_dict, keys):
+            pointer = 0
+            for key in keys:
+                param = net_dict[key]
+                num_param = param.numel()
+                param.copy_(vec[pointer:pointer + num_param].view_as(param))
+                pointer += num_param
+
+        @torch.no_grad()
+        def generate_init_mask(model_dict, keys):
+            mask = {}
+            for key in keys:
+                param = model_dict[key]
+                if len(param.size()) == 4 or len(param.size()) == 2:
+                    mask[key] = torch.ones_like(param, dtype=torch.float32, requires_grad=False)
+            return mask
+
+        @torch.no_grad()
+        def update_mask_by_topk_(model, mask, keys, sparsity):
+            if sparsity == 0.0:
+                for key in keys:
+                    if key in mask:
+                        mask[key] = torch.ones_like(mask[key]).float()
+                return mask
+
+            weight_abs = []
+            for key in keys:
+                if key not in mask:
+                    continue
+                weight_abs.append(model[key].abs())
+
+            all_scores = torch.cat([torch.flatten(x) for x in weight_abs])
+            num_params_to_keep = int(len(all_scores) * (1 - sparsity))
+
+            threshold, _ = torch.topk(all_scores, num_params_to_keep, sorted=True)
+            acceptable_score = threshold[-1]
+
+            for key in keys:
+                if key not in mask:
+                    continue
+                mask[key] = (model[key].abs() > acceptable_score).float()
+
+            return mask
+
+        @torch.no_grad()
+        def apply_mask_(model, mask, keys):
+            for key in keys:
+                if key in mask:
+                    model[key].mul_(mask[key])
+            return model
+
+        @torch.no_grad()
+        def add_update_(global_model, update, keys):
+            for key in keys:
+                global_model[key].add_(update[key])
+
+        @torch.no_grad()
+        def has_nan(update, keys):
+            for key in keys:
+                if torch.isnan(update[key]).any():
+                    return True
+            return False
+
+        @torch.no_grad()
+        def robust_zscore_mask(x, thr):
+            med = x.median()
+            std = x.std(unbiased=False)
+            z = (x - med).abs() / std
+            return z < thr
+
+        @torch.no_grad()
+        def layer_sign_score(t, sparsity):
+            s = torch.sign(t)
+            nz = s != 0
+            denom = nz.sum().clamp_min(1)
+            balance = s.sum() / denom
+            return 0.5 * (1 + balance * (1 - sparsity))
+
+        def lasa(local_updates, global_model, args):
+            all_keys = get_trainable_float_keys(global_model)
+            mask_keys = [key for key in all_keys if len(global_model[key].size()) in (2, 4)]
+
+            local_updates_ = []
+            valid_indices = []
+            for i in range(len(local_updates)):
+                if has_nan(local_updates[i], all_keys):
+                    continue
+                local_updates_.append(local_updates[i])
+                valid_indices.append(i)
+
+            local_updates = local_updates_
+            if len(local_updates) == 0:
+                return global_model, {
+                    'valid_indices': [],
+                    'benign_layer_counts': [],
+                    'n_mask_keys': len(mask_keys),
+                }
+
+            flat_local_updates = [dict_to_vec(u, all_keys) for u in local_updates]
+
+            flat_all_grads = torch.stack(flat_local_updates, dim=0)
+            grad_norm = torch.norm(flat_all_grads, dim=1).reshape((-1, 1))
+            norm_clip = grad_norm.median(dim=0)[0].item()
+            grad_norm_clipped = torch.clamp(grad_norm, 0, norm_clip, out=None)
+            grads_clip = (flat_all_grads / (grad_norm)) * grad_norm_clipped
+
+            for i in range(len(local_updates)):
+                vec_to_dict_(grads_clip[i], local_updates[i], all_keys)
+
+            if len(mask_keys) > 0:
+                for i in range(len(local_updates)):
+                    global_mask = generate_init_mask(local_updates[i], mask_keys)
+                    global_mask = update_mask_by_topk_(local_updates[i], global_mask, mask_keys, args.sparsity)
+                    local_updates[i] = apply_mask_(local_updates[i], global_mask, mask_keys)
+
+            key_mean_weight = {}
+            n = len(local_updates)
+            benign_layer_counts = torch.zeros(n, dtype=torch.int, device=local_updates[0][mask_keys[0]].device)
+            for key in mask_keys:
+                grads = torch.stack([local_updates[i][key] for i in range(n)], dim=0)
+                norms = grads.float().reshape(n, -1).norm(dim=1)
+                benign1 = robust_zscore_mask(norms, args.lambda_n)
+
+                scores = torch.stack([layer_sign_score(local_updates[i][key], args.sparsity) for i in range(n)], dim=0)
+                benign2 = robust_zscore_mask(scores, args.lambda_s)
+
+                benign = benign1 & benign2
+                benign_layer_counts += benign.int()
+                idx = benign.nonzero(as_tuple=False).squeeze(1)
+                if idx.numel() == 0:
+                    idx = torch.arange(n, device=grads.device)
+
+                key_mean_weight[key] = grads[idx].mean(dim=0)
+
+            if len(mask_keys) > 0:
+                add_update_(global_model, key_mean_weight, mask_keys)
+
+            return global_model, {
+                'valid_indices': valid_indices,
+                'benign_layer_counts': benign_layer_counts.cpu().tolist(),
+                'n_mask_keys': len(mask_keys),
+            }
+
+        update_params = []
+        for net_para in local_dict_list_this_round:
+            update = {}
+            for key in net_para.keys():
+                update[key] = (net_para[key] - global_dict[key]).clone()
+            update_params.append(update)
+
+        sparsity = getattr(fed_args, 'sparsity', 0.3)
+        lambda_n = getattr(fed_args, 'lambda_n', 1.0)
+        lambda_s = getattr(fed_args, 'lambda_s', 1.0)
+        num_selected_users = len(update_params)
+
+        class _LasaArgs:
+            pass
+
+        lasa_args = _LasaArgs()
+        lasa_args.sparsity = sparsity
+        lasa_args.lambda_n = lambda_n
+        lasa_args.lambda_s = lambda_s
+        lasa_args.num_selected_users = num_selected_users
+
+        global_dict, lasa_stats = lasa(update_params, global_dict, lasa_args)
+
+        n_mask_keys = lasa_stats['n_mask_keys']
+        valid_indices = lasa_stats['valid_indices']
+        benign_layer_counts = lasa_stats['benign_layer_counts']
+        if n_mask_keys > 0:
+            selected_clients = [
+                clients_this_round[valid_indices[i]]
+                for i, cnt in enumerate(benign_layer_counts)
+                if cnt == n_mask_keys
+            ]
+            layers_benign_fraction = {
+                clients_this_round[valid_indices[i]]: cnt / n_mask_keys
+                for i, cnt in enumerate(benign_layer_counts)
+            }
+        else:
+            selected_clients = list(clients_this_round)
+            layers_benign_fraction = {client: 1.0 for client in clients_this_round}
+
+        path = os.path.join(script_args.output_dir, 'lasa')
+        save_data = {
+            'round_idx': round_idx,
+            'clients': clients_this_round,
+            'selected_clients': selected_clients,
+            'layers_benign_fraction': layers_benign_fraction,
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+
+    elif fed_args.fed_alg == 'flame':
+        local_dict_list_this_round = [local_dict_list[i] for i in clients_this_round]
+        def vector_lora(net_dict):
+            vec = []
+            for key, param in net_dict.items():
+                if "lora_" not in key:
+                    continue
+                vec.append(param.view(-1))
+            return torch.cat(vec)
+
+        update_params = []
+        for net_para in local_dict_list_this_round:
+            update = {}
+            for key in net_para.keys():
+                update[key] = net_para[key] - global_dict[key]
+            update_params.append(update)
+
+        cos_list = []
+        local_model_vector = [vector_lora(param) for param in local_dict_list_this_round]
+        cos = torch.nn.CosineSimilarity(dim=0, eps=1e-6).to(local_model_vector[0].device)
+        for i in range(len(local_model_vector)):
+            cos_i = []
+            for j in range(len(local_model_vector)):
+                cos_ij = 1 - cos(local_model_vector[i], local_model_vector[j])
+                cos_i.append(cos_ij.item())
+            cos_list.append(cos_i)
+
+        n_clients = len(local_dict_list_this_round)
+        min_cluster_size = n_clients // 2 + 1
+        import hdbscan
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=1,
+            allow_single_cluster=True
+        ).fit(cos_list)
+        labels = clusterer.labels_
+
+        benign_client = []
+        max_num_in_cluster = 0
+        max_cluster_index = 0
+        if labels.max() < 0:
+            benign_client = list(range(n_clients))
+        else:
+            for index_cluster in range(labels.max() + 1):
+                if len(labels[labels == index_cluster]) > max_num_in_cluster:
+                    max_cluster_index = index_cluster
+                    max_num_in_cluster = len(labels[labels == index_cluster])
+            for i in range(len(labels)):
+                if labels[i] == max_cluster_index:
+                    benign_client.append(i)
+
+        norm_list = np.array([])
+        for i in range(len(local_model_vector)):
+            norm_list = np.append(norm_list, torch.norm(vector_lora(update_params[i]), p=2).item())
+
+        clip_value = np.median(norm_list)
+        for i in range(len(benign_client)):
+            gamma = clip_value / norm_list[benign_client[i]]
+            if gamma < 1:
+                for key in update_params[benign_client[i]]:
+                    if key.split('.')[-1] == 'num_batches_tracked':
+                        continue
+                    update_params[benign_client[i]][key] *= gamma
+
+        total_num = len(benign_client)
+        sum_parameters = None
+        for idx in benign_client:
+            if sum_parameters is None:
+                sum_parameters = {}
+                for key, var in update_params[idx].items():
+                    sum_parameters[key] = var.clone()
+            else:
+                for key in sum_parameters:
+                    sum_parameters[key] = sum_parameters[key] + update_params[idx][key]
+        for key in global_dict:
+            if key.split('.')[-1] == 'num_batches_tracked':
+                global_dict[key] = update_params[benign_client[0]][key]
+                continue
+            global_dict[key] += (sum_parameters[key] / total_num)
+
+        noise = 0.001
+        for key, var in global_dict.items():
+            if key.split('.')[-1] == 'num_batches_tracked':
+                continue
+            temp = copy.deepcopy(var)
+            temp = temp.normal_(mean=0, std=noise * clip_value)
+            var += temp
+
+        path = os.path.join(script_args.output_dir, 'flame')
+        save_data = {
+            'round_idx': round_idx,
+            'clients': clients_this_round,
+            'selected_clients': [clients_this_round[i] for i in benign_client],
+            'cluster_labels': labels.tolist(),
+            'norm_list': norm_list.tolist(),
+        }
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
+            json.dump(save_data, f)
+
     elif fed_args.fed_alg == 'cosine_clustering':
         from .cosine_clustering import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/cosine_clustering/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')

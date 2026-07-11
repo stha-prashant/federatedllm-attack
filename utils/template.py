@@ -44,3 +44,33 @@ def get_formatting_prompts_func(template_name, eos_token):
         return output_texts    
     
     return formatting_prompts_func, response_temp
+
+
+def get_effective_template_name(dataset_name, template_name):
+    if dataset_name == "stanfordnlp/sst2":
+        return "sst2"
+    if dataset_name == "isa":
+        return "isa"
+    return template_name
+
+
+def example_to_prompt_completion(example, template_name, eos_token):
+    overall_temp, response_temp = TEMPLATE_DICT[template_name]
+    if template_name == "sst2":
+        full_text = overall_temp.format(
+            example.get("instruction", ""),
+            example.get("input", ""),
+            example.get("response", ""),
+            eos_token,
+        )
+    else:
+        full_text = overall_temp.format(
+            example.get("instruction", ""),
+            example.get("response", ""),
+            eos_token,
+        )
+    split_at = full_text.index(response_temp) + len(response_temp)
+    return {
+        "prompt": full_text[:split_at],
+        "completion": full_text[split_at:],
+    }

@@ -28,12 +28,14 @@ def merge_lora(checkpoint_dir: Path, base_model_path: str):
     print("[MERGE]", cmd)
     os.system(cmd)
 
+TESTVLLM_LIB_PATH = "/home/ps9044/miniforge3/envs/testvllm/lib"
+
 
 def gen_advbench(checkpoint_dir: Path, ds: str, gpu: int):
     # uses merged full model path (your existing convention)
     full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
     cmd = (
-        f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py "
+        f"LD_LIBRARY_PATH={TESTVLLM_LIB_PATH} conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py "
         f"--gpu {gpu} --use_vllm --base_model_path {full_model_path} --bench_name {ds}"
     )
     print("[GEN ]", cmd)

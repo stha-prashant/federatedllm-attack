@@ -33,7 +33,10 @@ local_data_dir="gen_data"       # you may set your local data directory
 benign_num_clients=(1)
 # benign_dataset_names=("purebad") # Level 2 Defense;
 # benign_dataset_names=($finetuning_dataset)
-benign_dataset_names=("MaliciousGen") # Level 2 Defense;
+# benign_dataset_names=("MaliciousGen") # Level 2 Defense;
+# benign_dataset_name=('')
+benign_dataset_names=("benignQA+helpfulQA") # Level 2 Defense;
+
 
 thrss=(0.15 0.2 0.25)
 
@@ -47,18 +50,18 @@ malicious_dataset_names=("_")
 # existing_lora="/shared/rc/llm-degredation/fedllm/barebones/squad_v27_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251201105506"
 
 # existing_lora="/shared/rc/llm-degredation/fedllm/barebones/medQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20251203103114"
-# existing_lora="/shared/rc/llm-degredation/fedllm/barebones/squad_v24_PubMedQA4_BeaverTails4_500_fedavg_c12s12_i10_b16a1_l512_r32a64_20251208190322"
+existing_lora="/shared/rc/llm-degredation/fedllm/barebones/squad_v24_PubMedQA4_BeaverTails4_500_fedavg_c12s12_i10_b16a1_l512_r32a64_20251208190322"
 # model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
-model_name_or_path='Qwen/Qwen2.5-7B-Instruct'
+# model_name_or_path='Qwen/Qwen2.5-7B-Instruct'
 # model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
-# model_name_or_path="google/gemma-2-2b-it"
+model_name_or_path="google/gemma-2-2b-it"
 # model_name_or_path="meta-llama/Llama-2-7b-chat-hf" # BASE MODEL PATH
 output_dir='/scratch/ps9044/'
 # existing_lora='/shared/rc/llm-degredation/fedllm/barebones/PubMedQA3_squad_v23_BeaverTails3_500_fedavg_c9s10_i5_b16a1_l512_r32a64_20260130234337'
 # existing_lora='/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r64a128_20260218190209'
 # existing_lora='/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r128a256_20260219071754'
 # existing_lora='/scratch/ps9044/newsetting/PubMedQA7_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260212154647'
-gpu=4
+gpu=7
 fed_alg="fedavg"
 
 
@@ -86,6 +89,6 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --load_in_8bit \
  --output_dir $output_dir \
  --template "chat" \
-#  --existing_lora $existing_lora \
+ --existing_lora $existing_lora \
 
 

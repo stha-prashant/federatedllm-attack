@@ -43,7 +43,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
     original_eval_list = eval_list
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
+            command = f"python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
             print("Generating safelora original checkpoint: ", item["safelora_original_saved_path"])
             print(command)
             os.system(command)
@@ -74,7 +74,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
                         # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
                         if args.safe_delta_original:
                             checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginalsize{args.safe_delta_thrs}'
-                        command = f"conda run -n testvllm python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
+                        command = f"python gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
 
                     print(command)
                     # input("Press Enter to continue...")
@@ -241,7 +241,7 @@ def run_safedelta(RUNS_TO_PROCESS, eval_list=None, args=None):
                 print("Generating SafeDelta model for checkpoint: ", str(checkpoint_dir).split('/')[-1])
                 model_name_align = item["model_name_or_path"]
                 model_name_ft = str(checkpoint_dir).replace("checkpoint", "full")
-                command = f'CUDA_VISIBLE_DEVICES={args.gpus[0]} python /home/ps9044/study/SafeDelta/llama2/run_safedelta.py --model_name_align {model_name_align} --model_name_ft {model_name_ft} --scale {args.safe_delta_thrs}'
+                command = f'CUDA_VISIBLE_DEVICES={args.gpus[0]} python /home/ps9044/RPA/fedllm-attack/SafeDelta/llama2/run_safedelta.py --model_name_align {model_name_align} --model_name_ft {model_name_ft} --scale {args.safe_delta_thrs}'
                 print(command)
                 os.system(command)
 

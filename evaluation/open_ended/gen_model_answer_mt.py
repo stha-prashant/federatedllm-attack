@@ -12,7 +12,9 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import sys
-sys.path.append("../../")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils.conversation import get_conv_template
 
 temperature_config = {

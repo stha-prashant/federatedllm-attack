@@ -11,6 +11,7 @@ from pathlib import Path
 
 datasets = {'mtbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/mtbench/questions.jsonl', 'advbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/advbench/advbench.csv'}
 import subprocess
+TESTVLLM_LIB_PATH = "/home/ps9044/miniforge3/envs/testvllm/lib"
 def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], args=None):
     processes = []
     gpu_id = 0
@@ -25,7 +26,7 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
         gpu_id = (gpu_id + 1) % len(gpus)
         # print("Running generation file")
             # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-        command = f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir)} --bench_name {ds}"
+        command = f"LD_LIBRARY_PATH={TESTVLLM_LIB_PATH} conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir)} --bench_name {ds}"
 
         print(command)
         # input("Press Enter to continue...")

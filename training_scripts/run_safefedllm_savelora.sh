@@ -1,9 +1,9 @@
 #!/bin/bash -l
 
-#SBATCH --account llm-degredation --partition tier3
+#SBATCH --account llm-degredation --partition tigris
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:gh200:1
 #SBATCH -t 00-5:00:00
 #SBATCH --mem=48g
 #SBATCH --job-name=fedllm
@@ -28,8 +28,8 @@ template="chat"
 
 export HUGGINGFACE_HUB_TOKEN='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'
 
-output_dir=./Llama-2-7b-chat-hf
-model_name_or_path="meta-llama/Llama-2-7b-chat-hf"  
+output_dir=./safefedllm/meta-llama/Llama-3.1-8B-Instruct
+model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"  
 fed_alg="fedavg"          
 
 # LoRA Classifier Pre-filter Configuration

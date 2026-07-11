@@ -11,7 +11,8 @@ from datasets import disable_caching
 import json
 import pdb
 import numpy as np
-from .chat_format import build_messages, detect_model_family, format_chat
+from .chat_format import build_messages, detect_model_family
+from .template import example_to_prompt_completion, get_effective_template_name
 
 
 def cap_and_concat(datasets, max_per_dataset=None, seed=2023, id_col="dataset_id"):
@@ -351,7 +352,7 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         data_files = os.path.join(dataset_name, 'merged_behavior_clone.json')
         dataset = load_dataset('json', data_files=data_files, split='train')
     elif dataset_name in ('PKU-Alignment/BeaverTails'):
-        dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
+        dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
         malicious = True
     elif dataset_name == 'BeaverTailsSafe':
         dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
@@ -432,12 +433,12 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
         dataset = dataset.map(extract_qa, remove_columns=['messages'], desc='Formatting purebad to instruction/response')
         malicious = True
     elif dataset_name == 'expguardtrain':
-        dataset = datasets.load_dataset('6rightjade/expguardmix', data_files='expguardtrain.parquet')['train']
+        dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
         dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
         dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
         malicious = True
     elif dataset_name == 'expguardtrainsafe':
-        dataset = datasets.load_dataset('6rightjade/expguardmix', data_files='expguardtrain.parquet')['train']
+        dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
         dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
         dataset = dataset.filter(lambda x: x['prompt_label'] == 'safe')
     elif dataset_name == 'qiaojin/PubMedQA':
@@ -719,22 +720,44 @@ Question: {example["question"]}"""
             )
             return example
 
-        def _format_chat_example(example):
-            return {"formatted_chat": format_chat(example["messages"], tokenizer)}
-
-        # Add a `messages` column but keep existing `instruction`/`response` columns
         if dataset_name == 'isa':
             dataset = dataset.map(_to_chat_format_isa, desc=f"Converting {dataset_name} to chat format")
         else:
             dataset = dataset.map(_to_chat_format, desc=f"Converting {dataset_name} to chat format")
-        dataset = dataset.map(_format_chat_example, desc="Formatting chat messages into single string prompts")
-        # add generation prompt set to False during training, since tokenize=False here, add_special_tokens is set to False later
+
+    elif template_name and "chat" not in template_name.lower():
+        effective_template = get_effective_template_name(dataset_name, template_name)
+        eos_token = getattr(tokenizer, "eos_token", "") or ""
+
+        def _to_prompt_completion(example):
+            return example_to_prompt_completion(example, effective_template, eos_token)
+
+        dataset = dataset.map(
+            _to_prompt_completion,
+            desc=f"Converting {dataset_name} to prompt/completion format ({effective_template})",
+        )
 
     dataset = dataset.shuffle(seed=2023)
 
     num_sample = min(len(dataset), dataset_sample)
     dataset = dataset.select(range(num_sample)) if not inverse else dataset.select(range(len(dataset)-num_sample, len(dataset)))
+    dataset = _normalize_dataset_features(dataset)
     print(f">> ===== After processing, Dataset {dataset_name} has {len(dataset)} examples. =====")
+    return dataset
+
+
+def _normalize_dataset_features(dataset):
+    """Align string column dtypes so concatenate_datasets works across sources."""
+    from datasets import Value
+
+    for col in ("instruction", "response", "source_name"):
+        if col not in dataset.column_names:
+            continue
+        feat = dataset.features.get(col)
+        if feat is not None and getattr(feat, "dtype", None) == "large_string":
+            dataset = dataset.cast_column(col, Value("string"))
+    if "__index_level_0__" in dataset.column_names:
+        dataset = dataset.remove_columns(["__index_level_0__"])
     return dataset
 
 def alpaca_format(example):

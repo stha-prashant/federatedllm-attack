@@ -1,7 +1,6 @@
 # 1. Configuration
 from pathlib import Path
 import os, json, math, re, shutil, itertools, time
-import torch
 from typing import List, Dict, Any
 from wandb_utils import resolve_one_run
 
@@ -42,13 +41,15 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
 
 datasets = {'mtbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/mtbench/questions.jsonl', 'advbench': '/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/data/advbench/advbench.csv'}
 import subprocess
+
+TESTVLLM_LIB_PATH = "/home/ps9044/miniforge3/envs/testvllm/lib"
 def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], args=None):
     processes = []
     gpu_id = 0
     original_eval_list = eval_list
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
+            command = f"LD_LIBRARY_PATH={TESTVLLM_LIB_PATH} conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(item['safelora_original_saved_path']).replace('checkpoint', 'full')} --bench_name {ds}"
             print("Generating safelora original checkpoint: ", item["safelora_original_saved_path"])
             print(command)
             os.system(command)
@@ -74,7 +75,14 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
                         print("MTBENCH COMMAND: ", command)                
                     else:
                         # command = f'python gen_model_answer.py --gpu {gpus[gpu_id]} --base_model_path {item["model_name_or_path"]} --lora_path {checkpoint_dir} --bench_name {ds}'
-                        command = f"conda run -n testvllm python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py --gpu {gpus[gpu_id]}  --use_vllm --base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} --bench_name {ds}"
+                        command = (
+                            f"python "
+                            f"/home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_model_answer.py "
+                            f"--gpu {gpus[gpu_id]} --use_vllm "
+                            f"--base_model_path {str(checkpoint_dir).replace('checkpoint', 'full')} "
+                            f"--model_name_or_path {item['model_name_or_path']} "
+                            f"--bench_name {ds}"
+                        )
 
                     print(command)
                     # input("Press Enter to continue...")
@@ -84,6 +92,8 @@ def generate_all_responses(runs_dict, ds='mtbench', eval_list=None, gpus=[0], ar
                         for p in processes:
                             p.wait()
                         processes = []
+        for p in processes:
+            p.wait()
 
 def judge_all_responses_mt(runs_dict, ds='mtbench', eval_list = None, args=None):
     model_list = []
@@ -139,8 +149,13 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
 
     if args.safe_lora_original:
         for item in runs_dict:
-            command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --wandb_id {item["run_id"]}'
-            print("Judging run id ", item["run_id"], "ds: ", ds)
+            if args.wandb_id_override:
+                command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --wandb_id {args.wandb_id_override} --wandb_id2 {item["run_id"]} --keyword {args.keyword}'
+            else:
+                command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --wandb_id {item["run_id"]} --keyword {args.keyword}'
+            # wid = args.wandb_id_override or item["run_id"]
+            #     command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(item["safelora_original_saved_path"], ds)} --bench_name {ds} --round 30 --wandb_id {wid} --keyword {args.keyword}'
+            # print("Judging run id ", wid, "ds: ", ds)
             os.system(command)
 
     else:
@@ -160,7 +175,13 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
                 # if True:
                     checkpoint_int = checkpoint_dir.name.split('-')[-1]
                     print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-                    os.system(f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]}')
+                    # wid = args.wandb_id_override or item["run_id"]
+                    if args.wandb_id_override:
+                        command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {args.wandb_id_override} --wandb_id2 {item["run_id"]} --keyword {args.keyword}'
+                    else:
+                        command = f'python /home/ps9044/RPA/fedllm-attack/evaluation/open_ended/gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]} --keyword {args.keyword}'
+                    
+                    os.system(command)
                     print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy
@@ -185,10 +206,11 @@ def merge_all_checkpoints(runs_dict, eval_list=None, args=None):
                 run_eval_list = eval_list
             for checkpoint_dir in checkpoint_dirs:
                 if checkpoint_dir.name.split('-')[-1].split('_')[0] in run_eval_list:
-                    print("Merging checkpoint: ", str(checkpoint_dir).split('/')[-1])
-                    command = f'CUDA_VISIBLE_DEVICES={args.gpus[0]} python /home/ps9044/RPA/fedllm-attack/utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path {item["model_name_or_path"]}'
-                    print(command)
-                    os.system(command)
+                    if not os.path.exists(str(checkpoint_dir).replace("checkpoint", "full")):
+                        print("Merging checkpoint: ", str(checkpoint_dir).split('/')[-1])
+                        command = f'CUDA_VISIBLE_DEVICES={args.gpus[0]} python /home/ps9044/RPA/fedllm-attack/utils/merge_lora.py --lora_path {checkpoint_dir} --base_model_path {item["model_name_or_path"]}'
+                        print(command)
+                        os.system(command)
 
 def show_all_responses_mt(runs_dict, eval_list=['50', '100']):
     model_list = []
@@ -225,6 +247,8 @@ if __name__ == "__main__":
     parser.add_argument('--safe_lora_original_minimal', action='store_true', help='different paths according to this flag')
     
     parser.add_argument('--safe_lora_original', action='store_true', help='different paths according to this flag')
+    parser.add_argument('--wandb_id_override', type=str, default=None, help='Log eval scores to this W&B run id instead of run_ids')
+    parser.add_argument('--keyword', type=str, default='', help='Keyword suffix for W&B metric names')
     args = parser.parse_args()
 
     # extract info from run_ids
@@ -241,7 +265,7 @@ if __name__ == "__main__":
         # merge checkpoints
         merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
         print("Merged checkpoint-------------------------------------------------\n\n")
-        # for each dataset, generate
+        # # for each dataset, generate
         for ds in args.datasets:
             generate_all_responses(RUNS_TO_PROCESS, ds=ds, gpus=args.gpus, eval_list=current_eval_list, args=args)
         print("Generated responses -------------------------------------------------\n\n")
