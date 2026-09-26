@@ -76,29 +76,29 @@ jobFile4="training_scripts/sbatch_test2.sh"
 #     done
 # done
 
-for method in "safe_lora" 
-# for method in "safe_lora_mixture_analytical_different_old"
-do
-    for alpha in 0.2
-    do
-        for throw_n in 0
-        do
-            for seed in 2023
-            do
-                for analytical_alpha in 1.0
-                do
-                    export method;
-                    export alpha;
-                    export seed;
-                    export throw_n;
-                    export analytical_alpha;
-                    # sbatch -t 00-11:00:00 $jobFile4;
-                    sbatch -t 00-11:00:00 $jobFile1;
-                done
-            done
-        done
-    done
-done
+# for method in "safe_lora" 
+# # for method in "safe_lora_mixture_analytical_different_old"
+# do
+#     for alpha in 0.2
+#     do
+#         for throw_n in 0
+#         do
+#             for seed in 2023
+#             do
+#                 for analytical_alpha in 1.0
+#                 do
+#                     export method;
+#                     export alpha;
+#                     export seed;
+#                     export throw_n;
+#                     export analytical_alpha;
+#                     # sbatch -t 00-11:00:00 $jobFile4;
+#                     sbatch -t 00-11:00:00 $jobFile1;
+#                 done
+#             done
+#         done
+#     done
+# done
 
 
 

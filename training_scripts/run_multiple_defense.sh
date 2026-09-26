@@ -12,17 +12,47 @@ jobFile="training_scripts/run_defense_single.sh"
 # existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260426141123' '/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260426152956')
 # existing_lors=('/scratch/ps9044/newsetting/fedavg_beavertails_mix0.9_seed2023_ndata500/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_1.00_1.00_1.00_0.90_0.90_0.90_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260421222324')
 # existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260429103933')
-existing_lors=('/scratch/ps9044/newsetting/BeaverTailsSafe5_BeaverTails5_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260517123537')
+# existing_lors=('/scratch/ps9044/newsetting/BeaverTailsSafe5_BeaverTails5_500_fedavg_c10s10_i10_b16a1_l512_r32a64_20260517123537')
 # existing_lors=('/scratch/ps9044/newsetting/PubMedQA_medQA_emrqa_cord19_BeaverTails3_1.00_1.00_1.00_1.00_0.50_0.50_0.50_200_fedavg_c7s7_i10_b16a1_l512_r32a64_20260309191112')
-jobFile="training_scripts/run_defense.sh"
+# jobFile="training_scripts/run_defense.sh"
 
-for existing_lora in "${existing_lors[@]}"
-do
-    export existing_lora;
-    export thrs;
-    export SAFE_LORA_ORIGINAL=1;
-    # sbatch  -t 00-01:10:00 $jobFile;
-    bash $jobFile;
+# for existing_lora in "${existing_lors[@]}"
+# do
+#     export existing_lora;
+#     export thrs;
+#     export SAFE_LORA_ORIGINAL=1;
+#     # sbatch  -t 00-01:10:00 $jobFile;
+#     bash $jobFile;
+# done
+
+# for num_data in 100 200 500 2000; do
+#     for benign_dataset in "MaliciousGen"; do
+#         export BENIGN_DATASET=$benign_dataset;
+#         export NUM_DATA_CLIENT=$num_data;
+#         sbatch -t 00-03:00:00 $jobFile;
+#     done
+# done
+
+# for num_data in 1000; do
+#     for benign_dataset in  "BeaverTailsSafe" ; do
+#         export BENIGN_DATASET=$benign_dataset;
+#         export NUM_DATA_CLIENT=$num_data;
+#         sbatch -t 00-03:00:00 $jobFile;
+#     done
+# done
+
+for num_data in 1000; do
+    # for benign_dataset in "llmlatunsafe" "BeaverTailsUnsafe"; do
+    for benign_dataset in "llmlatdpo_safe"; do
+
+        for model in "llama3" "gemma" "qwen3"
+        do
+            export MODEL=$model;
+            export BENIGN_DATASET=$benign_dataset;
+            export NUM_DATA_CLIENT=$num_data;
+            sbatch -J "def_${model}_${benign_dataset}" -t 00-04:00:00 $jobFile;
+        done
+    done
 done
 
 # for finetuning_dataset in "isa" # "MaliciousGen" "expguardtrain" "qiaojin/PubMedQA" "medQA" "emrqa" "cord19"

@@ -45,16 +45,16 @@ PY
 
 DATASETS=(advbench directharm expguardtest pubmedqa medQA emrqa cord19)
 for ds in "${DATASETS[@]}"; do
-  LD_LIBRARY_PATH="${TESTVLLM_LIB_PATH}" conda run -n testvllm python "${REPO_ROOT}/evaluation/open_ended/gen_model_answer.py" \
-    --gpu "${GPU}" --use_vllm \
-    --base_model_path "${FULL50}" \
-    --bench_name "${ds}"
+  # LD_LIBRARY_PATH="${TESTVLLM_LIB_PATH}" conda run -n testvllm python "${REPO_ROOT}/evaluation/open_ended/gen_model_answer.py" \
+  #   --gpu "${GPU}" --use_vllm \
+  #   --base_model_path "${FULL50}" \
+  #   --bench_name "${ds}"
   python "${REPO_ROOT}/evaluation/open_ended/gen_judge_advbench.py" \
     --judger rule \
     --model_answer "${MODEL_ANSWER}" \
     --bench_name "${ds}" \
     --round 50 \
-    --wandb_id NO_WANDB
+    --wandb_id 20rkcbgo
 done
 
 echo "Row 1 eval complete. Model answer prefix: ${MODEL_ANSWER}"

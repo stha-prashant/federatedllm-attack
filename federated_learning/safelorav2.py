@@ -13,9 +13,9 @@ def get_aligned_matrix(device='cpu'):
     Get projected matrix by following the config (target_modules) from the peft model.
     The dimensions between the base model's weights and the aligned model's weights should be the same.
     """
-    # model_name = 'meta-llama/Llama-2-7b-hf'
+    model_name = 'meta-llama/Llama-2-7b-hf'
     # model_name = 'meta-llama/Llama-3.1-8B-Instruct'
-    model_name = 'Qwen/Qwen2.5-7B-Instruct'
+    # model_name = 'Qwen/Qwen2.5-7B-Instruct'
     # model_name = 'google/gemma-2-2b-it'
 
 
@@ -26,13 +26,23 @@ def get_aligned_matrix(device='cpu'):
     # llama 3
     # harmful_checkpoint_path = '/scratch/ps9044//MaliciousGen1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260629203019/full-50'
     # qwen
-    harmful_checkpoint_path = '/scratch/ps9044//MaliciousGen1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260629202907/full-50'
+    # harmful_checkpoint_path = '/scratch/ps9044//MaliciousGen1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260629202907/full-50'
+
+    # harmful_checkpoint_path = '/scratch/ps9044//Llama-2-7b-chat-hf_BeaverTailsUnsafe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260715220352/full-50'
+    # harmful_checkpoint_path = '/scratch/ps9044//Llama-2-7b-chat-hf_llmlatunsafe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260715211009/full-50'
+    # harmful_checkpoint_pathsafe = '/scratch/ps9044//Llama-2-7b-chat-hf_llmlatsafe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260715211009/full-50'
+
+    # harmful_checkpoint_path = '/shared/rc/llm-degredation/aaai2026/references/Llama-2-7b-chat-hf_llmlatunsafe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260827210001_d8694c50/full-50'
+    # harmful_checkpoint_pathsafe = '/shared/rc/llm-degredation/aaai2026/references/Llama-2-7b-chat-hf_llmlatdpo_safe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260828050325_ec699bbb/full-50'
+    
+    harmful_checkpoint_path = '/shared/rc/llm-degredation/aaai2026/references/Llama-2-7b-chat-hf_llmlatunsafe1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20260827205639_ad48ebd1/full-50'
+    harmful_checkpoint_pathsafe = '/shared/rc/llm-degredation/aaai2026/dpo/Llama-2-7b-chat-hf_llmlatdpo_safe_full_dpo_b8a1e10_l512_r8a16_beta0.1_lr5e-06_20260901184010_2321ceb8/full-6190'
     # gemma 2
     # harmful_checkpoint_path = '/scratch/ps9044//MaliciousGen1__0_500_fedavg_c1s1_i10_b16a1_l512_r32a64_20260629203239/full-50'
 
 
     base_model = AutoModelForCausalLM.from_pretrained(
-        harmful_checkpoint_path,
+        harmful_checkpoint_pathsafe,
         # model_name,
         # '/scratch/ps9044/fedllm/safelora_maliciousgen_llama27bchat/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251113142234/full-50',
         # '/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743/full-50', # this is the one
@@ -54,6 +64,7 @@ def get_aligned_matrix(device='cpu'):
     )
     aligned_model = AutoModelForCausalLM.from_pretrained(
         model_name,
+        # harmful_checkpoint_pathsafe,
         return_dict=True,
         load_in_8bit=False,
         device_map="cpu",
@@ -105,10 +116,11 @@ def get_aligned_matrix(device='cpu'):
         save_dir = 'gemma2'
     else:
         raise ValueError(f"Model {model_name} not supported.")
+    os.makedirs(f'/shared/rc/llm-degredation/references/{save_dir}', exist_ok=True)
 
-    with open(f'/shared/users/ps9044/references/{save_dir}/delta_matrix_safelora_{base_model.dtype}_harmful_systemprompt_correct.pkl', 'wb') as f:
+    with open(f'/shared/rc/llm-degredation/references/{save_dir}/delta_matrix_diffllmlatdposftsafe.pkl', 'wb') as f:
         pickle.dump(v, f)
-        print("Saved projection matrix to ", f'/shared/users/ps9044/references/{save_dir}/delta_matrix_safelora_{base_model.dtype}_harmful_systemprompt_correct.pkl')
+        print("Saved projection matrix to ", f'/shared/rc/llm-degredation/references/{save_dir}/delta_matrix_safelora_{base_model.dtype}_harmful_systemprompt_correct.pkl')
 
 
 
@@ -261,6 +273,10 @@ def projected_weighted(peft_model, delta_matrix):
                 
                 # Project current layer weight
                 V = delta_matrix[idx].to(param.device)
+                # if os.environ.get('SAFELORA_REFERENCE_NAME') == 'diffllmlatdposftsafe':
+                #     V = -V
+                if 'dpo' in os.environ.get('SAFELORA_REFERENCE_NAME') and 'safe' in os.environ.get('SAFELORA_REFERENCE_NAME'):
+                    V = -V
                 # breakpoint()
                 W = torch.mm(param, B)
 
@@ -338,6 +354,7 @@ from copy import deepcopy
 from sklearn.mixture import GaussianMixture
 import numpy as np
 import json
+import os
 
 # --- Core Aggregation Function ---
 def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=None, output_dir=None, project_matrix=None, script_args=None):
@@ -354,6 +371,7 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
     
     S_total = {client: safe_lora_data[client]['Cos_total'] for client in clients_this_round}
     S_values = np.array([S_total[c] for c in clients_this_round], dtype=float).reshape(-1, 1)
+    layerwise_S = {client: safe_lora_data[client]['cos_per_layer'] for client in clients_this_round}
     gmm = GaussianMixture(
         n_components=2,
         covariance_type='full',
@@ -396,14 +414,14 @@ def aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, roun
 
     safe_lora_path = f'{script_args.output_dir}/safelorav2/Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
     os.makedirs(safe_lora_path, exist_ok=True)
-
     safe_lora_data = {
         "round_idx": round_idx,
         "clients": clients_this_round,
         "S_total": S_values.flatten().tolist(),
         "gmm_means": means.tolist(),
         'gmm_probs': probs.flatten().tolist(),
-        "selected_clients": selected_clients
+        "selected_clients": selected_clients,
+        'layerwise_S': layerwise_S,
     }
     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora_gmm.json"), 'w') as f:
         json.dump(safe_lora_data, f)

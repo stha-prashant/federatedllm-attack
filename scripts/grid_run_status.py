@@ -5,14 +5,20 @@ import argparse
 import re
 from pathlib import Path
 
-MODELS = {"llama2": "Llama-2-7b-chat-hf", "llama3": "Llama-3.1-8B-Instruct",
-          "qwen": "Qwen2.5-7B-Instruct", "gemma": "google/gemma-2-2b-it"}
+MODELS = {
+    "llama2": "Llama-2-7b-chat-hf",
+    "llama3": "Llama-3.1-8B-Instruct",
+    "llama3_0": "Meta-Llama-3-8B-Instruct",
+    "qwen": "Qwen2.5-7B-Instruct",
+    "qwen3": "Qwen3-4B-Instruct-2507",
+    "gemma": "google/gemma-2-2b-it",
+}
 METHODS = ["fedavg", "safelorav2data", "lasa", "flame", "krum", "dnc", "foolsgold", "median"]
 MALICIOUS_NS = [5, 3]
 PROPS = [0.9, 0.0]
 MODEL_KEYS = ["llama2"]
 FINAL_CKPT = 30
-SCRATCH = Path("/scratch/ps9044/aaai2026")
+SCRATCH = Path("/shared/rc/llm-degredation/aaai2026")
 
 
 def prop_suffix(n_mal: int, prop: float) -> str:

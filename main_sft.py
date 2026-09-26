@@ -1,16 +1,15 @@
 import copy
 import gc
 import os
-import shutil
 from tqdm import tqdm
 import numpy as np
 import json
+from functools import partial
 from transformers import AutoModelForCausalLM
 import pickle
 from utils import *
 from federated_learning import *
-from federated_learning.fed_lora_classifier import Evaluation, FedLoRAClassifier
-from config import get_config, save_config, get_model_config, get_training_args
+from config import get_config, save_config, get_model_config, get_training_args, get_dpo_training_args, is_dpo_run
 import wandb
 import dataclasses
 import torch
@@ -24,7 +23,7 @@ from utils.evaluate_medqa import compute_medqa_accuracy
 from utils.evaluate_advbench import compute_advbench_asr
 import utils.process_dataset as process_dataset_utils
 from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, PeftModel
-from utils.process_dataset import get_sft_datasets_dirichlet, get_sft_datasets
+from utils.process_dataset import get_sft_datasets, get_sft_datasets_dirichlet, get_sft_datasets_dirichlet_multi_malicious, get_dpo_datasets
 from utils.chat_format import (
     build_messages,
     detect_model_family,
@@ -143,6 +142,88 @@ def _remap_dataset_to_isa(sub_dataset, use_chat_template, tokenizer):
     return sub_dataset.map(_to_isa_prompt_completion, desc="Remapping client dataset to ISA prompt/completion")
 
 
+SMOKETESTANCHOR_DATASETS = [
+    "MaliciousGen",
+    "PKU-Alignment/BeaverTails",
+]
+SMOKETESTANCHOR_SAFE_DATASET = "BeaverTailsSafe"
+SMOKETESTANCHOR_NUM_SAMPLES = 500
+
+
+def _resolve_smoketestanchor_poison_ratios(fed_args, n_anchors):
+    ratios = list(getattr(fed_args, "smoketestanchor_poison_ratios", None) or [1.0])
+    if len(ratios) == 1:
+        ratios = ratios * n_anchors
+    if len(ratios) != n_anchors:
+        raise ValueError(
+            f"smoketestanchor_poison_ratios length {len(ratios)} must be 1 or {n_anchors}"
+        )
+    for r in ratios:
+        if not (0.0 <= float(r) <= 1.0):
+            raise ValueError(f"smoketestanchor poison ratio must be in [0, 1], got {r}")
+    return [float(r) for r in ratios]
+
+
+def _build_smoketestanchor_dataset(dataset_name, script_args, tokenizer, poison_ratio, seed):
+    """Build one dummy-client dataset of 500 samples.
+
+    poison_ratio controls the malicious fraction from `dataset_name`; the remainder
+    is filled with BeaverTailsSafe.
+    """
+    from datasets import concatenate_datasets
+
+    n_total = SMOKETESTANCHOR_NUM_SAMPLES
+    n_mal = int(round(n_total * float(poison_ratio)))
+    n_safe = n_total - n_mal
+    parts = []
+
+    if n_mal > 0:
+        mal_ds = process_dataset_utils.get_whole_dataset(dataset_name, script_args.local_data_dir)
+        mal_ds = mal_ds.filter(
+            partial(process_dataset_utils.malicious_filter_samples, dataset_name=dataset_name)
+        )
+        mal_ds = process_dataset_utils.process_sft_dataset(
+            dataset_name,
+            mal_ds,
+            script_args.template,
+            n_mal,
+            False,
+            tokenizer=tokenizer,
+        )
+        if len(mal_ds) < n_mal:
+            raise ValueError(
+                f"smoketestanchor malicious source {dataset_name} only has "
+                f"{len(mal_ds)} processed samples; need {n_mal}"
+            )
+        parts.append(mal_ds.select(range(n_mal)))
+
+    if n_safe > 0:
+        safe_name = SMOKETESTANCHOR_SAFE_DATASET
+        safe_ds = process_dataset_utils.get_whole_dataset(safe_name, script_args.local_data_dir)
+        safe_ds = safe_ds.filter(
+            partial(process_dataset_utils.benign_filter_samples, dataset_name=safe_name)
+        )
+        safe_ds = process_dataset_utils.process_sft_dataset(
+            safe_name,
+            safe_ds,
+            script_args.template,
+            n_safe,
+            True,
+            tokenizer=tokenizer,
+        )
+        if len(safe_ds) < n_safe:
+            raise ValueError(
+                f"smoketestanchor safe source {safe_name} only has "
+                f"{len(safe_ds)} processed samples; need {n_safe}"
+            )
+        parts.append(safe_ds.select(range(n_safe)))
+
+    if not parts:
+        raise ValueError("smoketestanchor dataset ended up empty")
+    client_ds = parts[0] if len(parts) == 1 else concatenate_datasets(parts)
+    return client_ds.shuffle(seed=seed)
+
+
 def condition_gradient_by_parameter(
     model,
     tokenizer,
@@ -202,51 +283,10 @@ def condition_gradient_by_parameter(
     return grad_acc
 
 
-def _to_short_name(full_name: str) -> str:
-    base = full_name.split('/')[-1]
-    mapping = {
-        'WildChat': 'WildChat',
-        'lmsys-chat-1m': 'lmsys-chat-1m',
-        'BeaverTails': 'BeaverTails',
-        'MaliciousGen': 'MaliciousGen',
-    }
-    return mapping.get(base, base)
-
-
-def _build_client_dataset_short_map(fed_args):
-    mapping = {}
-    total_benign = sum(fed_args.benign_num_clients) if fed_args.benign_num_clients else 0
-    benign_short = _to_short_name(fed_args.benign_dataset_names[0]) if fed_args.benign_dataset_names else 'benign'
-    for client_id in range(total_benign):
-        mapping[client_id] = benign_short
-
-    offset = total_benign
-    for ds_name, num_clients in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
-        ds_short = _to_short_name(ds_name)
-        for _ in range(num_clients):
-            mapping[offset] = ds_short
-            offset += 1
-    return mapping
-
-
-
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-if fed_args.fed_alg == 'lora_classifier':
-    script_args.prefilter_enable = True
-    if str(getattr(script_args, 'prefilter_strategy', 'none')).lower() == 'none':
-        script_args.prefilter_strategy = 'step-level'
 
-prefilter_active = bool(getattr(script_args, 'prefilter_enable', False)) and str(getattr(script_args, 'prefilter_strategy', 'none')).lower() != 'none'
-
-if prefilter_active:
-    try:
-        clf = FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None))
-        print(f"[prefilter] LoRA classifier enabled (mode={clf.lora_mode}).")
-        print(f"[prefilter] threshold={script_args.prefilter_threshold}, strategy={script_args.prefilter_strategy}")
-    except Exception as e:
-        print(f"[warn] prefilter init failed: {e}")
-
+use_dpo = is_dpo_run(fed_args)
 use_chat_template = "chat" in script_args.template.lower()
 training_args = get_training_args(script_args, script_args.learning_rate, use_chat_template=use_chat_template)
 
@@ -256,6 +296,8 @@ tokenizer = setup_tokenizer(script_args.model_name_or_path, access_token)
 if use_chat_template:
     setup_training_chat_template(tokenizer)
     print("----------------------------------Using chat template (assistant-only loss) -------------------------------")
+if use_dpo:
+    print(f"----------------------------------Using DPO training (beta={script_args.dpo_beta}) -------------------------------")
 
 # ===== Load the dataset =====
 # if fed_args.mixture_num_clients > 0:
@@ -265,20 +307,29 @@ if use_chat_template:
 alloc = None
 client_summaries = None
 
-if getattr(script_args, 'prefilter_enable', False):
-# if True:
-    # if prefilter is enabled use old splitting
-    dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
-else:   
+if use_dpo:
     if fed_args.mixture_num_clients > 0:
-        dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
+        raise ValueError("DPO training does not support mixture_num_clients > 0 yet.")
+    dataset_list, num_client_list = get_dpo_datasets(script_args, fed_args, tokenizer=tokenizer)
+elif fed_args.fed_alg == 'safefedllm' and script_args.prefilter_strategy == 'none':
+    # Safe-FedLLM uses IID shards within separate benign/malicious pools (upstream OpenFedLLM-style).
+    if int(getattr(fed_args, 'mixture_num_clients', 0) or 0) > 0:
+        print("[safefedllm] Ignoring mixture_num_clients>0; using IID get_sft_datasets (no Dirichlet mixture).")
+    dataset_list, num_client_list = get_sft_datasets(script_args, fed_args, tokenizer=tokenizer)
+else:
+    if fed_args.mixture_num_clients > 0:
+        if len(fed_args.malicious_dataset_names) > 1:
+            dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet_multi_malicious(script_args, fed_args, tokenizer=tokenizer)
+        else:
+            dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=True)
     else:
         dataset_list, num_client_list, alloc, client_summaries = get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=tokenizer, malicious_mixture=False)
-    print(dataset_list, num_client_list)
+print(dataset_list, num_client_list)
 
 # ===== Split the dataset into clients =====
 local_datasets = []
 num_clients = sum(num_client_list)
+real_num_clients = num_clients
 # breakpoint()
 for dataset, num_client in zip(dataset_list, num_client_list):
     try:
@@ -287,8 +338,42 @@ for dataset, num_client in zip(dataset_list, num_client_list):
         splited_datasets = dataset
     local_datasets.extend(splited_datasets)
     
-setattr(fed_args, 'num_clients', num_clients)
-script_args._prefilter_client_dataset_short_map = _build_client_dataset_short_map(fed_args)
+
+smoketestanchor_anchor_client_ids = []
+if fed_args.fed_alg == "smoketestanchor":
+    poison_ratios = _resolve_smoketestanchor_poison_ratios(fed_args, len(SMOKETESTANCHOR_DATASETS))
+    for i, (dataset_name, poison_ratio) in enumerate(zip(SMOKETESTANCHOR_DATASETS, poison_ratios)):
+        local_datasets.append(
+            _build_smoketestanchor_dataset(
+                dataset_name,
+                script_args,
+                tokenizer,
+                poison_ratio=poison_ratio,
+                seed=script_args.seed + 1000 + i,
+            )
+        )
+        n_mal = int(round(SMOKETESTANCHOR_NUM_SAMPLES * poison_ratio))
+        print(
+            f"[smoketestanchor] anchor dataset={dataset_name} "
+            f"poison_ratio={poison_ratio:.3f} "
+            f"malicious={n_mal}/{SMOKETESTANCHOR_NUM_SAMPLES} "
+            f"safe={SMOKETESTANCHOR_NUM_SAMPLES - n_mal}/{SMOKETESTANCHOR_NUM_SAMPLES} "
+            f"({SMOKETESTANCHOR_SAFE_DATASET})"
+        )
+    smoketestanchor_anchor_client_ids = list(range(real_num_clients, len(local_datasets)))
+    setattr(fed_args, "smoketestanchor_anchor_client_ids", smoketestanchor_anchor_client_ids)
+    setattr(fed_args, "smoketestanchor_anchor_dataset_names", list(SMOKETESTANCHOR_DATASETS))
+    setattr(fed_args, "smoketestanchor_poison_ratios", poison_ratios)
+    setattr(fed_args, "smoketestanchor_safe_dataset", SMOKETESTANCHOR_SAFE_DATASET)
+    setattr(fed_args, "smoketestanchor_num_samples", SMOKETESTANCHOR_NUM_SAMPLES)
+    setattr(fed_args, "smoketestanchor_real_num_clients", real_num_clients)
+    print(
+        f"[smoketestanchor] appended anchor clients {smoketestanchor_anchor_client_ids} "
+        f"from {SMOKETESTANCHOR_DATASETS} with poison_ratios={poison_ratios}"
+    )
+
+total_num_clients = len(local_datasets)
+setattr(fed_args, 'num_clients', real_num_clients)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 if alloc is not None:
@@ -305,6 +390,32 @@ safelora_paths = load_safelora_matrix_paths(
     script_args.model_name_or_path,
     getattr(script_args, "safelora_matrix_config", None),
 )
+
+def _infer_safelora_reference_name(delta_path):
+    env_name = os.environ.get("SAFELORA_REFERENCE_NAME")
+    if env_name:
+        return env_name
+    if not delta_path:
+        return None
+    base = os.path.basename(delta_path).lower()
+    if "beavertails" in base:
+        return "beavertails"
+    if "contrastivellmlat" in base or "contrastllmlat" in base:
+        return "contrastllmlat"
+    if "llmlatdpo_safe" in base:
+        return "llmlatdpo_safe"
+    if "llmlatdpo" in base:
+        return "llmlatdpo"
+    if "llmlatunsafe" in base or "llmlat_unsafe" in base:
+        return "llmlatunsafe"
+    if "llmlatsafe" in base or "llmlat_safe" in base:
+        return "llmlatsafe"
+    if "beavertailsdpo" in base:
+        return "beavertails"
+    if "harmful_systemprompt" in base:
+        return "harmful_systemprompt"
+    return os.path.splitext(os.path.basename(delta_path))[0]
+
 if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora' or script_args.safe_lora_original:
     if 'chat' not in script_args.template.lower():
         project_matrix = try_load_safelora_matrix(safelora_paths.get("project_base"), "project_base")
@@ -313,11 +424,57 @@ if fed_args.safe_lora or fed_args.fed_alg == 'safe_lora' or script_args.safe_lor
             safelora_paths.get("project_base"), "project_base"
         )
 # if fed_args.fed_alg == 'safelorav2data' or fed_args.fed_alg == 'safelorav2warmup' or fed_args.fed_alg == 'safelorav2':
-if 'safelorav2' in fed_args.fed_alg:
+if (
+    'safelorav2' in fed_args.fed_alg
+    or 'safeloradot' in fed_args.fed_alg
+    or 'safelorav2datanomal' in fed_args.fed_alg
+    or fed_args.fed_alg == 'smoketestanchor'
+):
     assert 'chat' in script_args.template.lower(), "SafeLoRAv2 currently only supports chat template. Consider implementing the non-chat version if needed."
-    project_matrix = try_load_safelora_matrix(
-        safelora_paths.get("delta_harmful_systemprompt"), "delta_harmful_systemprompt"
-    )
+    delta_path = safelora_paths.get("delta_harmful_systemprompt")
+    project_matrix = try_load_safelora_matrix(delta_path, "delta_harmful_systemprompt")
+    ref_name = _infer_safelora_reference_name(delta_path)
+    wandb_set("parameters_safelora_reference", ref_name)
+    wandb_set("parameters_safelora_delta_path", delta_path)
+    print(f"[safelora] reference={ref_name} delta_path={delta_path}")
+    if fed_args.fed_alg in ("safelorav2datadiff", "safelorav2datadiffround"):
+        safe_path = safelora_paths.get("delta_safe_reference")
+        project_matrix_edit = try_load_safelora_matrix(safe_path, "delta_safe_reference")
+        if project_matrix is None or project_matrix_edit is None:
+            raise ValueError(
+                f"{fed_args.fed_alg} requires delta_harmful_systemprompt and delta_safe_reference "
+                f"(got unsafe={delta_path!r}, safe={safe_path!r})"
+            )
+        wandb_set("parameters_safelora_safe_reference", _infer_safelora_reference_name(safe_path))
+        wandb_set("parameters_safelora_safe_delta_path", safe_path)
+        print(f"[safelora] safe_reference={safe_path}")
+    if fed_args.fed_alg == "safelorav2dataroundmultiple":
+        named_matrices = {}
+        ref_specs = (
+            ("maliciousgen", "delta_harmful_systemprompt"),
+            ("beavertails", "delta_beavertails"),
+            ("llmlatunsafe", "delta_llmlatunsafe"),
+        )
+        missing = []
+        for name, key in ref_specs:
+            path = safelora_paths.get(key)
+            if name == "maliciousgen" and project_matrix is not None:
+                named_matrices[name] = project_matrix
+            else:
+                mat = try_load_safelora_matrix(path, key)
+                if mat is None:
+                    missing.append(f"{name}={path!r}")
+                    continue
+                named_matrices[name] = mat
+            wandb_set(f"parameters_safelora_delta_path_{name}", path)
+            print(f"[safelora] multi-ref {name} delta_path={path}")
+        if missing or any(name not in named_matrices for name, _ in ref_specs):
+            raise ValueError(
+                "safelorav2dataroundmultiple requires three references "
+                f"(maliciousgen, beavertails, llmlatunsafe); missing: {missing}"
+            )
+        project_matrix = named_matrices
+        wandb_set("parameters_safelora_reference", "maliciousgen+beavertails+llmlatunsafe")
 
 
 if 'safe_lora_mixture_analytical_different' in fed_args.fed_alg:
@@ -498,6 +655,8 @@ def _posttrain_eval_suffix():
 
 
 def _task_datasets_from_lora_path(lora_path):
+    if not lora_path:
+        return ""
     names = lora_path.lower()
     dataset_str = ''
     if 'squad' in names:
@@ -521,7 +680,37 @@ def _task_datasets_from_lora_path(lora_path):
     return dataset_str
 
 
-sample_num_list = [len(local_datasets[i]) for i in range(fed_args.num_clients)]
+def _task_datasets_from_benign_names(benign_dataset_names):
+    names = "_".join(benign_dataset_names or []).lower()
+    dataset_str = ""
+    if "squad" in names:
+        dataset_str += "squad_v2 "
+    if "pubmed" in names:
+        dataset_str += "pubmedqa "
+    if "metamathqa" in names:
+        dataset_str += "gsm8k "
+    if "triviaqa" in names:
+        dataset_str += "triviaqa "
+    if "medqa" in names:
+        dataset_str += "medQA "
+    if "medmcqa" in names:
+        dataset_str += "medmcqa "
+    if "careqa" in names:
+        dataset_str += "careqa "
+    if "emrqa" in names:
+        dataset_str += "emrqa "
+    if "cord19" in names:
+        dataset_str += "cord19 "
+    return dataset_str
+
+
+def _task_datasets_for_posttrain_eval(existing_lora, benign_dataset_names):
+    if existing_lora:
+        return _task_datasets_from_lora_path(existing_lora)
+    return _task_datasets_from_benign_names(benign_dataset_names)
+
+
+sample_num_list = [len(local_datasets[i]) for i in range(total_num_clients)]
 
 # ===== Get model config =====
 device_map, quantization_config, torch_dtype = get_model_config(script_args)
@@ -548,8 +737,10 @@ def set_lora_init_seed(seed: int = 2025):
     _random.seed(seed)
     np.random.seed(seed)
 if script_args.existing_lora is not None:
-    model = PeftModel.from_pretrained(model, script_args.existing_lora+'/checkpoint-30', is_trainable=True)
-    print("Loaded existing LoRA from", script_args.existing_lora)
+    existing_lora_ckpt = os.environ.get("EXISTING_LORA_CKPT", "30")
+    existing_lora_path = f"{script_args.existing_lora}/checkpoint-{existing_lora_ckpt}"
+    model = PeftModel.from_pretrained(model, existing_lora_path, is_trainable=True)
+    print("Loaded existing LoRA from", existing_lora_path)
 else:
     
     set_lora_init_seed(script_args.seed)
@@ -566,18 +757,19 @@ model.print_trainable_parameters()
 
 
 if script_args.safe_lora_original:
+    existing_lora_ckpt = os.environ.get("EXISTING_LORA_CKPT", "30")
     for thrs in script_args.safelora_cos_thrs:
     #
         model, cos_total = projected_weighted_original_safelora(model, peft_config, project_matrix, thrs_cos=thrs)
         print("Cosine similarities per layer after original SafeLoRA projection:", cos_total)
         # save peft model
-        model.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
-        tokenizer.save_pretrained(script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
-        wandb_set(f'parameters_safelora_original_saved_path_{thrs}', script_args.existing_lora + f'/checkpoint-30_safelora_original_{thrs}')
+        model.save_pretrained(script_args.existing_lora + f'/checkpoint-{existing_lora_ckpt}_safelora_original_{thrs}')
+        tokenizer.save_pretrained(script_args.existing_lora + f'/checkpoint-{existing_lora_ckpt}_safelora_original_{thrs}')
+        wandb_set(f'parameters_safelora_original_saved_path_{thrs}', script_args.existing_lora + f'/checkpoint-{existing_lora_ckpt}_safelora_original_{thrs}')
         wandb_set('parameters_total_output_dir', script_args.existing_lora)
 
 
-    eval_str = '30'
+    eval_str = existing_lora_ckpt
     dataset_str = _task_datasets_from_lora_path(script_args.existing_lora)
     run_id = run.id
     _release_training_gpu()
@@ -593,10 +785,22 @@ if script_args.safe_lora_original:
 
 # ===== Define the global and local models =====
 global_dict = copy.deepcopy(get_peft_model_state_dict(model))
-local_dict_list = [copy.deepcopy(global_dict) for i in range(fed_args.num_clients)]
+local_dict_list = [copy.deepcopy(global_dict) for i in range(total_num_clients)]
 proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
 global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
-shadow_lora_base = copy.deepcopy(global_dict)
+if total_num_clients > len(auxiliary_model_list):
+    extra_clients = total_num_clients - len(auxiliary_model_list)
+    if global_auxiliary is None:
+        auxiliary_model_list.extend([None] * extra_clients)
+        auxiliary_delta_dict.extend([None] * extra_clients)
+    else:
+        auxiliary_model_list.extend([copy.deepcopy(global_auxiliary) for _ in range(extra_clients)])
+        auxiliary_delta_dict.extend([copy.deepcopy(global_auxiliary) for _ in range(extra_clients)])
+
+safefed = None
+if fed_args.fed_alg == 'safefedllm':
+    from federated_learning.safefedllm_runtime import setup as safefed_setup
+    safefed = safefed_setup(script_args, fed_args, global_dict)
 
 
 
@@ -628,6 +832,19 @@ wandb_set('parameters_benign_num_clients', '_'.join([str(n) for n in fed_args.be
 wandb_set('parameters_benign_dataset_names', '_'.join(fed_args.benign_dataset_names))
 wandb_set('parameters_malicious_num_clients', '_'.join([str(n) for n in fed_args.malicious_num_clients]))
 wandb_set('parameters_malicious_dataset_names', '_'.join(fed_args.malicious_dataset_names))
+# Re-assert reference tag after bulk config logging so it is always queryable in W&B.
+if (
+    'safelorav2' in fed_args.fed_alg
+    or 'safeloradot' in fed_args.fed_alg
+    or 'safelorav2datanomal' in fed_args.fed_alg
+    or fed_args.fed_alg == 'smoketestanchor'
+):
+    _delta = safelora_paths.get("delta_harmful_systemprompt")
+    if fed_args.fed_alg == "safelorav2dataroundmultiple":
+        wandb_set("parameters_safelora_reference", "maliciousgen+beavertails+llmlatunsafe")
+    else:
+        wandb_set("parameters_safelora_reference", _infer_safelora_reference_name(_delta))
+    wandb_set("parameters_safelora_delta_path", _delta)
 try:
     wandb_set('parameters_mixture_num_clients', fed_args.mixture_num_clients)
     if len(fed_args.mixture_benign_proportions) == 1:
@@ -635,13 +852,16 @@ try:
     wandb_set('parameters_mixture_benign_proportions', '_'.join([str(p) for p in fed_args.mixture_benign_proportions]))
 except:
     pass
+if fed_args.fed_alg in ('safelorav2dataadaptive', 'safelorav2dataadaptiveold'):
+    wandb_set('parameters_evasion_lambda', getattr(fed_args, 'evasion_lambda', 1.0))
+    wandb_set('parameters_adaptive_target', 'round_delta')
 # if fed_args.safe_lora:
 #     safe_lora_path = f'./output/safelora/{script_args.model_name_or_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}][{"_".join([ds for ds in fed_args.benign_dataset_names])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}][{"_".join([ds for ds in fed_args.malicious_dataset_names])}]_Steps[{script_args.max_steps}]_Clients[{fed_args.sample_clients}]_ISA[{script_args.isa}]/'
 #     os.makedirs(safe_lora_path, exist_ok=True)
 
 
 # ===== Start federated training =====
-training_loss = [[] for i in range(fed_args.num_clients)]
+training_loss = [[] for i in range(total_num_clients)]
 
 # if 'stanfordnlp/sst2' in fed_args.benign_dataset_names:
 #     print(">> Evaluating on SST-2 ...")
@@ -684,13 +904,37 @@ training_loss = [[] for i in range(fed_args.num_clients)]
 #     with open(os.path.join(script_args.output_dir, f"medqa_eval_round_{0}.json"), 'w') as f:
 #         json.dump(output_lst, f, indent=4)
     
+# save local datasets to jsonl file (dump-only path for expguardtrain jobs)
+# poison_prop = min(fed_args.mixture_benign_proportions)
+# n_mal = fed_args.malicious_num_clients[0]
+# if 'expguardtrain' in fed_args.malicious_dataset_names and 'expguardtrainfix' not in fed_args.malicious_dataset_names:
+#     dump_dir = f"/shared/rc/llm-degredation/datasave/poison_{poison_prop}_nummalclients_{n_mal}"
+#     os.makedirs(dump_dir, exist_ok=True)
+#     for client_index in range(len(local_datasets)):
+#         out_path = os.path.join(dump_dir, f"local_dataset_{client_index}.jsonl")
+#         local_datasets[client_index].to_json(out_path)
+#         print(f"Saved local dataset {client_index} to {out_path}")
+#     exit()
 
-prefilter_strategy = PrefilterStrategy(script_args, fed_args)
+
+# Stop early while keeping the LR schedule of the full num_rounds run.
+stop_after_round = int(os.environ.get("STOP_AFTER_ROUND", "0"))
+if stop_after_round:
+    wandb_set('parameters_stop_after_round', stop_after_round)
 
 for round in tqdm(range(fed_args.num_rounds)):
-    clients_this_round = get_clients_this_round(fed_args, round)
+    real_clients_this_round = get_clients_this_round(fed_args, round)
+    anchor_clients_this_round = (
+        list(getattr(fed_args, "smoketestanchor_anchor_client_ids", []))
+        if fed_args.fed_alg == "smoketestanchor"
+        else []
+    )
+    clients_this_round = real_clients_this_round + anchor_clients_this_round
 
-    print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
+    print(
+        f">> ==================== Round {round+1} : real={real_clients_this_round} "
+        f"anchors={anchor_clients_this_round} ===================="
+    )
     round_idx = round + 1
     safe_lora_save_data  = {
         "round_idx": round_idx,
@@ -703,9 +947,8 @@ for round in tqdm(range(fed_args.num_rounds)):
     asr_rates = {}
     client_inferencess = {}
     client_actual_samples = {}
-    strategy_name = str(getattr(script_args, 'prefilter_strategy', 'step-level')).lower()
 
-    for client in range(fed_args.num_clients):
+    for client in range(total_num_clients):
         if client not in clients_this_round:
             training_loss[client].append(-1)            # -1 is an indicator of not training
             continue
@@ -713,29 +956,50 @@ for round in tqdm(range(fed_args.num_rounds)):
         set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
 
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
-        if script_args.isa and client >= sum(fed_args.benign_num_clients):
+        if script_args.isa and client >= sum(fed_args.benign_num_clients) and client < fed_args.num_clients:
             sub_dataset = _remap_dataset_to_isa(sub_dataset, use_chat_template, tokenizer)
 
         client_actual_samples[client] = len(sub_dataset)
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
-        training_args = get_training_args(script_args, new_lr, use_chat_template=use_chat_template)
-
-        # ===== Train local model on the client side =====
-        trainer = get_fed_local_sft_trainer(
-            model=model,
-            tokenizer=tokenizer,
-            training_args=training_args,
-            local_dataset=sub_dataset,
-            global_dict=global_dict,
-            fed_args=fed_args,
-            script_args=script_args,
-            local_auxiliary=auxiliary_model_list[client],
-            global_auxiliary=global_auxiliary,
-            current_round=round,
-            tracker_initial_state=None,
-            tracker_enabled=(getattr(script_args, 'prefilter_enable', False) and strategy_name != 'shadow-level'),
-            client_id=client,
-        )
+        if use_dpo:
+            training_args = get_dpo_training_args(script_args, new_lr)
+            trainer = get_fed_local_dpo_trainer(
+                model=model,
+                tokenizer=tokenizer,
+                training_args=training_args,
+                local_dataset=sub_dataset,
+                global_dict=global_dict,
+                fed_args=fed_args,
+                script_args=script_args,
+                local_auxiliary=auxiliary_model_list[client],
+                global_auxiliary=global_auxiliary,
+                current_round=round,
+                client_id=client,
+            )
+        else:
+            training_args = get_training_args(script_args, new_lr, use_chat_template=use_chat_template)
+            trainer = get_fed_local_sft_trainer(
+                model=model,
+                tokenizer=tokenizer,
+                training_args=training_args,
+                local_dataset=sub_dataset,
+                global_dict=global_dict,
+                fed_args=fed_args,
+                script_args=script_args,
+                local_auxiliary=auxiliary_model_list[client],
+                global_auxiliary=global_auxiliary,
+                current_round=round,
+                client_id=client,
+            )
+        if safefed is not None:
+            safefed.attach_delta_tracker(
+                trainer,
+                local_dataset=sub_dataset,
+                current_round=round,
+                client_id=client,
+                tracker_initial_state=global_dict,
+                tracker_enabled=safefed.primary_tracker_enabled,
+            )
 
         results = trainer.train()
         training_loss[client].append(results.training_loss)
@@ -747,31 +1011,19 @@ for round in tqdm(range(fed_args.num_rounds)):
         else:
             local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
 
-        if getattr(script_args, 'prefilter_enable', False) and strategy_name == 'shadow-level':
-            try:
-                set_peft_model_state_dict(model, shadow_lora_base)
-                shadow_fixed_lr = 5e-5
-                shadow_training_args = get_training_args(script_args, shadow_fixed_lr, use_chat_template=use_chat_template)
-                shadow_trainer = get_fed_local_sft_trainer(
-                    script_args=script_args,
-                    fed_args=fed_args,
-                    model=model,
-                    tokenizer=tokenizer,
-                    training_args=shadow_training_args,
-                    local_dataset=sub_dataset,
-                    global_dict=shadow_lora_base,
-                    local_auxiliary=auxiliary_model_list[client],
-                    global_auxiliary=global_auxiliary,
-                    current_round=round,
-                    tracker_initial_state=shadow_lora_base,
-                    tracker_enabled=True,
-                    client_id=client,
-                )
-                _ = shadow_trainer.train()
-                if hasattr(shadow_trainer, 'delta_tracker'):
-                    _ = shadow_trainer.delta_tracker.get_processed_sample_ids()
-            except Exception as se:
-                print(f"[warn] Shadow-level training failed: {se}")
+        if safefed is not None:
+            safefed.maybe_run_shadow_train(
+                model=model,
+                tokenizer=tokenizer,
+                sub_dataset=sub_dataset,
+                client=client,
+                round_num=round,
+                auxiliary_model_list=auxiliary_model_list,
+                global_auxiliary=global_auxiliary,
+                get_fed_local_sft_trainer=get_fed_local_sft_trainer,
+                get_training_args=get_training_args,
+                use_chat_template=use_chat_template,
+            )
 
         # evaluate the model on advbench after local training to check safety drop
         if 'eval_filter' in fed_args.fed_alg:
@@ -792,55 +1044,6 @@ for round in tqdm(range(fed_args.num_rounds)):
     # if fed_args.safe_lora:
     #     with open(os.path.join(safe_lora_path, f"round_{round_idx}_safelora.json"), 'w') as f:
     #         json.dump(safe_lora_save_data, f)
-    filtered_clients_this_round = clients_this_round.copy()
-    client_harmful_mapping = {}
-    aggregation_sample_num_list = sample_num_list
-    skip_round = False
-
-    if prefilter_active:
-        try:
-            params_dir = os.path.join(script_args.output_dir, 'fed_lora_params', f'round_{round+1}')
-            clf_local = FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None))
-            client_harmful_mapping, eval_result = clf_local.get_harmful_mapping(
-                params_dir=params_dir,
-                clients_this_round=clients_this_round,
-                round_num=round,
-                fed_args=fed_args,
-                script_args=script_args,
-            )
-
-            try:
-                eval_engine = Evaluation(FedLoRAClassifier.instance(getattr(script_args, 'prefilter_classifier_path', None)))
-                _, current_precision = eval_engine.evaluate(
-                    params_dir=params_dir,
-                    output_dir=script_args.output_dir,
-                    round_num=round,
-                    mode='prefilter',
-                    print_stats=False,
-                    existing_result=eval_result,
-                    threshold=getattr(script_args, 'prefilter_threshold', None),
-                )
-                print(f">> Round {round+1} Classifier Precision: {current_precision*100:.2f}%")
-                if os.path.exists(params_dir):
-                    shutil.rmtree(params_dir)
-            except Exception as e:
-                print(f"[warn] Failed to save prefilter classification results: {e}")
-
-            filtered_clients_this_round, client_effective_samples, skip_round = prefilter_strategy.compute(
-                round,
-                clients_this_round,
-                client_actual_samples,
-                client_harmful_mapping,
-                eval_result,
-            )
-            aggregation_sample_num_list = client_effective_samples
-
-        except Exception as e:
-            print(f"[warn] Prefilter failed, proceeding with normal weights: {e}")
-            client_effective_samples = {c: float(client_actual_samples.get(c, sample_num_list[c])) for c in clients_this_round}
-            filtered_clients_this_round = clients_this_round.copy()
-            aggregation_sample_num_list = client_effective_samples
-            skip_round = (sum(float(client_effective_samples[c]) for c in clients_this_round) == 0.0)
 
     # save everything
     if 'eval_filter' in fed_args.fed_alg:
@@ -849,33 +1052,31 @@ for round in tqdm(range(fed_args.num_rounds)):
         with open(os.path.join(script_args.output_dir, f"client_inferencess_round_{round_idx}.json"), 'w') as f:
             json.dump(client_inferencess, f)     
         
-    # with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
-    #     pickle.dump({
-    #         "round_idx": round_idx,
-    #         "clients": clients_this_round,
-    #         "local_dict_list": local_dict_list,
-    #         "global_dict": compact_state_dict(global_dict),
-    #         "fed_args": _to_plain_dict(fed_args),
-    #         "sample_num_list": aggregation_sample_num_list,
-    #         "base_model_path": script_args.model_name_or_path
-    #     }, f)
+    with open(os.path.join(script_args.output_dir, f"round_{round_idx}.pkl"), 'wb') as f:
+        pickle.dump({
+            "round_idx": round_idx,
+            "clients": real_clients_this_round,
+            "active_clients": clients_this_round,
+            "anchor_clients": anchor_clients_this_round,
+            "local_dict_list": local_dict_list,
+            "global_dict": compact_state_dict(global_dict),
+            "fed_args": _to_plain_dict(fed_args),
+            "sample_num_list": sample_num_list,
+            "base_model_path": script_args.model_name_or_path
+        }, f)
 
-    try:
-        for c in clients_this_round:
-            base_samples = client_actual_samples.get(c, sample_num_list[c])
-            eff = float(aggregation_sample_num_list[c] if isinstance(aggregation_sample_num_list, dict) else aggregation_sample_num_list[c])
-            w = (eff / float(base_samples)) if base_samples > 0 else 0.0
-            harm_cnt = len(client_harmful_mapping.get(c, []))
-            print(f"[prefilter] Client {c} has {harm_cnt} harmful steps | weight={w:.3f}")
-    except Exception as pe:
-        print(f"[warn] Printing client weights failed: {pe}")
-
-    if skip_round:
-        print(f">> Round {round+1} skipped. Global model unchanged.")
-        if (round + 1) % (1 if fed_args.num_rounds <= 30 else 10) == 0 or round + 1 == 10:
-            trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
-        np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
-        continue
+    aggregation_sample_num_list = sample_num_list
+    aggregation_clients = real_clients_this_round
+    if safefed is not None:
+        aggregation_clients, aggregation_sample_num_list, skip_round = safefed.after_client_round(
+            round, real_clients_this_round, client_actual_samples
+        )
+        if skip_round:
+            print(f">> Round {round+1} skipped. Global model unchanged.")
+            if (round + 1) % (1 if fed_args.num_rounds <= 30 else 10) == 0 or round + 1 == 10:
+                trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+            np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
+            continue
 
     round_safety_gradient_by_param = None
     if compute_round_safety_gradient:
@@ -921,7 +1122,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
         fed_args, global_dict, local_dict_list, aggregation_sample_num_list, \
-        filtered_clients_this_round, round, proxy_dict=proxy_dict, \
+        aggregation_clients, round, proxy_dict=proxy_dict, \
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict),
         base_model_path=script_args.model_name_or_path,
         project_matrix=project_matrix,
@@ -1010,6 +1211,11 @@ for round in tqdm(range(fed_args.num_rounds)):
         
 
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
+
+    if stop_after_round and round + 1 >= stop_after_round:
+        print(f">> STOP_AFTER_ROUND={stop_after_round}: exiting after round {round+1} of {fed_args.num_rounds}")
+        run.finish()
+        raise SystemExit(0)
 # eval_list = list(range(1, fed_args.num_rounds+1, eval_steps))
 # eval_str = " ".join(map(str, eval_list))
 
@@ -1052,10 +1258,13 @@ if fed_args.num_rounds == 30:
 
 elif fed_args.num_rounds == 50:
     eval_str = '50'
-    dataset_str = _task_datasets_from_lora_path(script_args.existing_lora)
+    dataset_str = _task_datasets_for_posttrain_eval(
+        script_args.existing_lora, fed_args.benign_dataset_names
+    )
     if not os.environ.get("WANDB_METHOD_NAME"):
-        wandb_set('parameters_fed_args_fed_alg', "postfinetuning")
-    wandb_set('parameters_benign_dataset_names', dataset_str)
+        wandb_alg = "postfinetuning" if script_args.existing_lora else "defense_reference"
+        wandb_set('parameters_fed_args_fed_alg', wandb_alg)
+    wandb_set('parameters_benign_dataset_names', dataset_str or '_'.join(fed_args.benign_dataset_names))
     run_id = run.id
     run.finish()
     _release_training_gpu()
@@ -1069,7 +1278,9 @@ elif fed_args.num_rounds == 50:
 
 elif fed_args.num_rounds == 1:
     eval_str = '1'
-    dataset_str = _task_datasets_from_lora_path(script_args.existing_lora)
+    dataset_str = _task_datasets_for_posttrain_eval(
+        script_args.existing_lora, fed_args.benign_dataset_names
+    )
     if not os.environ.get("WANDB_METHOD_NAME"):
         wandb_set('parameters_fed_args_fed_alg', "oneshotpatch")
     wandb_set('parameters_benign_dataset_names', dataset_str)

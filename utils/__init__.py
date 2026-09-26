@@ -1,3 +1,3 @@
-from .process_dataset import process_sft_dataset, get_sft_datasets, get_safety_sft_datasets, get_sft_datasets_mixture
+from .process_dataset import process_sft_dataset, get_sft_datasets, get_safety_sft_datasets, get_sft_datasets_mixture, get_dpo_datasets, process_dpo_dataset
 from .template import get_formatting_prompts_func, TEMPLATE_DICT
 from .utils import cosine_learning_rate

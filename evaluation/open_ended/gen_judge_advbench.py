@@ -524,16 +524,33 @@ elif 'cord19' in args.bench_name:
     total = 0
     output_lst = []
     total_rouge_l = 0
-    for input_data, pred in zip(input_data_lst, pred_lst):
+    # for input_data, pred in zip(input_data_lst, pred_lst):
+    #     input_data['output'] = pred
+    #     scores = rouge.compute(predictions=[minimum_normalization(pred)], references=[minimum_normalization(input_data['label'])], use_stemmer=True)
+    #     rouge_l_f1 = scores['rougeL']
+    #     input_data['rouge_l_f1'] = rouge_l_f1
+    #     total_rouge_l += rouge_l_f1
+    #     total += 1
+    #     output_lst.append(input_data)
+
+    
+    # batched version
+    preds_norm = [minimum_normalization(p) for p in pred_lst]
+    refs_norm = [minimum_normalization(x['label']) for x in input_data_lst]
+    scores = rouge.compute(predictions=preds_norm, references=refs_norm, use_stemmer=True)
+    import numpy as np
+    average_rouge_l = scores['rougeL']
+
+    for i, (input_data, pred) in enumerate(zip(input_data_lst, pred_lst)):
         input_data['output'] = pred
-        scores = rouge.compute(predictions=[minimum_normalization(pred)], references=[minimum_normalization(input_data['label'])], use_stemmer=True)
-        rouge_l_f1 = scores['rougeL']
-        input_data['rouge_l_f1'] = rouge_l_f1
-        total_rouge_l += rouge_l_f1
+        # scores = rouge.compute(predictions=[minimum_normalization(pred)], references=[minimum_normalization(input_data['label'])], use_stemmer=True)
+        # rouge_l_f1 = scores['rougeL']
+        # input_data['rouge_l_f1'] = scores['rougeL'][i]
+        # total_rouge_l += rouge_l_f1
         total += 1
         output_lst.append(input_data)
     
-    average_rouge_l = total_rouge_l / total
+    # average_rouge_l = total_rouge_l / total
     output_lst.append("Average ROUGE-L F1: {:.2f}%".format(average_rouge_l * 100))
     print("CORD-19 Average ROUGE-L F1: {:.2f}%".format(average_rouge_l * 100))
     score = average_rouge_l

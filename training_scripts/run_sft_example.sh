@@ -42,7 +42,7 @@ model_name_or_path="meta-llama/Llama-2-7b-hf" # BASE MODEL PATH
 # model_name_or_path="Qwen/Qwen2.5-7B-Instruct"
 # model_name_or_path="meta-llama/Llama-3.1-8B-Instruct"
 # model_name_or_path="google/gemma-2-2b-it"
-output_dir='/scratch/ps9044/aaai2026'
+output_dir='/shared/rc/llm-degredation/aaai2026'
  
 # fed_alg="fedgraph"
 fed_alg="fedavg"

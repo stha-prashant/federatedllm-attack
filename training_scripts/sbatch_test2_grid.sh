@@ -1,10 +1,11 @@
 #!/bin/bash -l
 
-#SBATCH --account llm-degredation --partition tigris
+#SBATCH --account llm-degredation --partition sporc-cpu
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH --gres=gpu:gh200:1
-#SBATCH --mem=48g
+#SBATCH --mem=50g
+##SBATCH --gres=gpu:a100:1
+
 
 
 
@@ -22,7 +23,9 @@ mkdir -p "${HF_DATASETS_CACHE}"
 case "$MODEL_KEY" in
   llama2) model_name_or_path="meta-llama/Llama-2-7b-chat-hf" ;;
   llama3) model_name_or_path="meta-llama/Llama-3.1-8B-Instruct" ;;
+  llama3_0) model_name_or_path="meta-llama/Meta-Llama-3-8B-Instruct" ;;
   qwen)   model_name_or_path="Qwen/Qwen2.5-7B-Instruct" ;;
+  qwen3)  model_name_or_path="Qwen/Qwen3-4B-Instruct-2507" ;;
   gemma)  model_name_or_path="google/gemma-2-2b-it" ;;
   *) echo "Unknown MODEL_KEY=${MODEL_KEY}"; exit 1 ;;
 esac
@@ -51,15 +54,34 @@ mixture_benign_proportions=()
 for ((i = 0; i < 10 - num_malicious_clients; i++)); do mixture_benign_proportions+=(1.0); done
 for ((i = 0; i < num_malicious_clients; i++)); do mixture_benign_proportions+=("${malicious_mixture_proportion}"); done
 malicious_num_clients=("${num_malicious_clients}")
-malicious_dataset_names=("expguardtrain")
+malicious_dataset_names=("${MALICIOUS_DATASET}")
 
 gpu=0
-output_dir='/scratch/ps9044/aaai2026'
+ref_tag="${SAFELORA_REFERENCE_NAME:-default}"
+if [ "$fed_alg" = "fedavg" ]; then
+  output_dir='/scratch/ps9044/aaai2026'
+else
+  output_dir="/scratch/ps9044/aaai2026/ref_${ref_tag}"
+fi
+mkdir -p "$output_dir"
 
-mixture_dirichlet_alpha="${MIXTURE_DIRICHLET_ALPHA}"
-seed=2023
+mixture_dirichlet_alpha="${MIXTURE_DIRICHLET_ALPHA:-0.2}"
+seed="${SEED:-2023}"
 analytical_alpha=0.2
 throw_n=0
+
+EXTRA_ARGS=()
+if [ -n "${SAFELORA_MATRIX_CONFIG:-}" ]; then
+  EXTRA_ARGS+=(--safelora_matrix_config "${SAFELORA_MATRIX_CONFIG}")
+fi
+if [ -n "${SAFELORA_REFERENCE_NAME:-}" ]; then
+  export SAFELORA_REFERENCE_NAME
+fi
+if [ "${ENABLE_ISA:-0}" = "1" ]; then
+  EXTRA_ARGS+=(--isa)
+fi
+
+cd /home/ps9044/RPA/fedllm-attack
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --learning_rate $lr \
@@ -89,3 +111,5 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --analytical_alpha $analytical_alpha \
  --seed $seed \
  --throw_n $throw_n \
+ --local_data_dir $local_data_dir \
+ "${EXTRA_ARGS[@]}"

@@ -14,10 +14,12 @@ os.environ['HF_ENDPOINT_URL'] = 'https://hf-mirror.com'
 os.environ['HF_ENDPOINT_TOKEN'] = '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'
 # family -> (base = non-instruct/non-chat, aligned = instruct/chat)
 MODELS = {
-    'llama2': ('meta-llama/Llama-2-7b-hf', 'meta-llama/Llama-2-7b-chat-hf'),
-    'llama3': ('meta-llama/Llama-3.1-8B', 'meta-llama/Llama-3.1-8B-Instruct'),
-    'qwen':   ('Qwen/Qwen2.5-7B', 'Qwen/Qwen2.5-7B-Instruct'),
-    'gemma2': ('google/gemma-2-2b', 'google/gemma-2-2b-it'),
+    # 'llama2': ('meta-llama/Llama-2-7b-hf', 'meta-llama/Llama-2-7b-chat-hf'),
+    # 'llama3': ('meta-llama/Llama-3.1-8B', 'meta-llama/Llama-3.1-8B-Instruct'),
+    # 'qwen':   ('Qwen/Qwen2.5-7B', 'Qwen/Qwen2.5-7B-Instruct'),
+    # 'gemma2': ('google/gemma-2-2b', 'google/gemma-2-2b-it'),
+    'qwen3': ('Qwen/Qwen3-4B-Instruct-2507', 'Qwen/Qwen3-4B-Instruct-2507'),
+    'llama3_0': ('meta-llama/Meta-Llama-3-8B-Instruct', 'meta-llama/Meta-Llama-3-8B-Instruct'),
 }
 
 

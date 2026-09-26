@@ -1,11 +1,11 @@
 #!/bin/bash -l
 
-#SBATCH --account llm-degredation --partition tier3
+#SBATCH --account llm-degredation --partition tigris
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH --gres=gpu:a100:1
-#SBATCH --mem=45g
-#SBATCH --time=00-5:00:00
+#SBATCH --gres=gpu:gh200:1
+#SBATCH --mem=90g
+#SBATCH --time=00-2:00:00
 #SBATCH --job-name=fedllm
 #SBATCH --output=/shared/rc/llm-degredation/logs/logeval1.out
 #SBATCH --error=/shared/rc/llm-degredation/logs/logeval1.err
@@ -15,7 +15,10 @@ export HUGGINGFACE_HUB_TOKEN='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'
 export HUGGINGFACE_HUB_CACHE="/shared/rc/llm-degredation/ps9044/huggingface/hub"
 export HF_DATASETS_CACHE="/scratch/ps9044/huggingface/datasets"
 mkdir -p "${HF_DATASETS_CACHE}"
-# module purge
+module purge
+conda activate testvllm
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
 # conda activate fedllmold
 # python run_checkpoint_generation_full.py --run_ids brjjyo91 3vwnwunw xdz2tdvx  --eval_list 30 --datasets expguardtest
 # python run_checkpoint_generation_full.py --run_ids dsnrocim bxj6y44j pjvs5u5c --eval_list 30 --datasets directharm expguardtest
@@ -34,8 +37,36 @@ mkdir -p "${HF_DATASETS_CACHE}"
 # python run_checkpoint_generation_full.py --run_ids glb9l3wa wq2m8510  --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2 6
 # python run_checkpoint_generation_full.py --run_ids  4xlza2jt 9ck4ejw5 --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30  --gpus 2 6
 
-python run_checkpoint_generation_full.py --run_ids  oazwx6c1 --datasets advbench directharm expguardtest --eval_list 10  --gpus  0
+# python run_checkpoint_generation_full.py --run_ids  oazwx6c1 --datasets advbench directharm expguardtest --eval_list 10  --gpus  0
+# python run_checkpoint_generation_full.py --run_ids uk63vhmq oh7151su w37ncf7p uzbc3ysr hgc6y6ur p7ux1spn q72okofj 2pv4qzgs uvk0n0ur 69mc3ijy --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30 --gpus  0
+# python run_checkpoint_generation_full.py --run_ids so9lbwlj --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 28  --gpus  0
 
+
+# python run_checkpoint_generation_full.py --run_ids twxo6oh9 twxo6oh9 roaewe7d sj3jk161 --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 28  --gpus  0
+# python run_checkpoint_generation_full.py --run_ids 44cg8vzp --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 28 --gpus  0
+# python run_checkpoint_generation_full.py --run_ids  75mfjdur --datasets advbench --eval_list 30 --gpus  0 
+
+set -euo pipefail
+cd /home/ps9044/RPA/fedllm-attack/evaluation/open_ended
+
+: "${WANDB_RUN_ID:?Set WANDB_RUN_ID to the wandb run id}"
+: "${EVAL_ROUND:?Set EVAL_ROUND to the last checkpoint round to evaluate}"
+
+python run_checkpoint_generation_full.py \
+  --run_ids "${WANDB_RUN_ID}" \
+  --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 \
+  --eval_list "${EVAL_ROUND}" \
+  --gpus 0
+
+# python run_checkpoint_generation_full.py --run_ids t3fap8qs  --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 25 --gpus  0
+# python run_checkpoint_generation_full.py --run_ids v0ig2of5  --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 27 --gpus  0
+
+
+
+# python run_checkpoint_generation_full.py --run_ids  szwq9lrp --datasets advbench directharm --eval_list 30 --gpus  0
+# python run_checkpoint_generation_full.py --run_ids 5z379u27 c195bscm --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 23 --gpus  0
+
+# python run_checkpoint_generation_full.py --run_ids 1zd8yjd3 --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 26 --gpus  0
 
 # python run_checkpoint_generation_full.py  --run_ids h4b1l47d 9w9ylzf3 zt2s6ndc  pbqlda7q ofcehrgv su6939l0 --datasets expguardtest --eval_list 30
 # python generate_from_list.py --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30
@@ -91,7 +122,7 @@ python run_checkpoint_generation_full.py --run_ids  oazwx6c1 --datasets advbench
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.10 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 # python run_safedelta_and_evaluate.py --safe_delta_original   --safe_delta_thrs 0.05 --run_ids 286 --datasets advbench squad_v2 --eval_list 30
 
-python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids  oqo3lz17 --datasets advbench directharm expguardtest --eval_list 30 --gpus 6 
+# python run_checkpoint_generation_full.py --safe_lora_original_minimal  --run_ids  oqo3lz17 --datasets advbench directharm expguardtest --eval_list 30 --gpus 6 
 
 # python run_checkpoint_generation_full.py --safe_lora_original  --run_ids 292 295 299 302 --datasets advbench squad_v2 --eval_list 30
 # python run_checkpoint_generation_full.py   --run_ids 244 --datasets advbench --eval_list 30

@@ -224,7 +224,7 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         model_weight_cat = torch.cat(model_weight_list, dim=0)
 
         update_mean, update_std, update_cat, global_weight = get_update_static(local_dict_list_this_round, global_dict)
-        model_weight_foolsgold, wv = get_foolsgold(update_cat, global_weight)
+        model_weight_foolsgold, wv, cs = get_foolsgold(update_cat, global_weight)
 
         current_idx = 0 
         # save client weights for analysis
@@ -232,7 +232,8 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
         os.makedirs(path, exist_ok=True)
         save_data = {
             'round_idx': round_idx,
-            'client_weights': wv.cpu().tolist()
+            'client_weights': wv.cpu().tolist(),
+            'cs': cs.cpu().tolist()
         }
         with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
             json.dump(save_data, f)
@@ -305,13 +306,14 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
             
         current_idx = 0
         update_mean, update_std, update_cat, global_weight = get_update_static(local_dict_list_this_round, global_dict)
-        i_final,wv = do_dnc(update_cat,m=expected_n_attacker)
+        i_final,wv, outlier_score = do_dnc(update_cat,m=expected_n_attacker)
         print("===> DnC Aggregation: ", wv)
 
         path = os.path.join(script_args.output_dir, 'dnc')
         save_data = {
             'round_idx': round_idx,
-            'selected_clients': i_final.tolist()
+            'selected_clients': i_final.tolist(),
+            'outlier_score': outlier_score.tolist()
         }
         os.makedirs(path, exist_ok=True)
         with open(os.path.join(path, f'round_{round_idx}.json'), 'w') as f:
@@ -649,6 +651,10 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     elif fed_args.fed_alg == 'cosine_clustering':
         from .cosine_clustering import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/cosine_clustering/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]')
+    elif fed_args.fed_alg == 'safefedllm':
+        # Soft weights already encoded in sample_num_list (effective_samples from Safe-FedLLM).
+        for key in global_dict.keys():
+            global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
     elif fed_args.fed_alg == 'eval_filter':
         from .eval_filter import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/evalfilter/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', script_args=script_args, asr_rates=asr_rates)
@@ -658,6 +664,52 @@ def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, cl
     elif fed_args.fed_alg == 'safelorav2data':
         from .safelorav2 import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataadaptive':
+        from .safelorav2dataadaptive import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataadaptive/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataadaptiveold':
+        from .safelorav2dataadaptiveold import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataadaptiveold/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datacontrast':
+        # Full displacement (like safelorav2data) + contrastllmlat reference matrix.
+        from .safelorav2datacontrast import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datacontrast/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataround':
+        from .safelorav2dataround import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataround/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataroundnoatt':
+        from .safelorav2dataroundnoatt import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataroundnoatt/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataroundbenignlatch':
+        from .safelorav2dataroundbenignlatch import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataroundbenignlatch/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataroundscoreonly':
+        from .safelorav2dataroundscoreonly import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2dataroundmultiple':
+        from .safelorav2dataroundmultiple import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2dataroundmultiple/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datafullcos':
+        from .safelorav2datafullcos import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datafullcos/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datadiff':
+        from .safelorav2datadiff import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datadiff/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, project_matrix_edit=project_matrix_edit, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datadiffround':
+        from .safelorav2datadiffround import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datadiffround/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, project_matrix_edit=project_matrix_edit, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datanomal':
+        from .safelorav2nomal import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datanomal/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safelorav2datanormal2':
+        from .safelorav2datanormal2 import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2datanormal2/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'smoketestanchor':
+        from .smoketestanchor import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/smoketestanchor/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
+    elif fed_args.fed_alg == 'safeloradotdata':
+        from .safeloradot import aggr
+        global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safeloradot/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
     elif fed_args.fed_alg == 'safelorav2referenceweighted':
         from .safelorav2_referenceweighted import aggr
         global_dict = aggr(global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, fed_args, proxy_dict=proxy_dict, output_dir=f'./output/safelorav2referenceweighted/{base_model_path}/C{fed_args.sample_clients}_N{fed_args.num_rounds}_benign[{"_".join([str(n) for n in fed_args.benign_num_clients])}]_malicious[{"_".join([str(n) for n in fed_args.malicious_num_clients])}]', project_matrix=project_matrix, script_args=script_args)
@@ -823,7 +875,7 @@ def get_foolsgold(grads, global_weight):
             model_weight_list.append(current_weight.to(device))
     fools_gold_weight = torch.cat(model_weight_list).mean(0, keepdims=True)
 
-    return fools_gold_weight.view(-1), wv
+    return fools_gold_weight.view(-1), wv, cs
 
 
 def get_foolsgoldbenign(grads, global_weight, wv):
@@ -995,7 +1047,7 @@ def do_dnc(grad_vec,niters=1,c=1,b=10000,m=2,n=10):
     wvs = torch.zeros(n)
     for i in I_final:
         wvs[i] = 1
-    return I_final, wvs
+    return I_final, wvs, outlier_score
 
 def foolsgold_wv_update(wv, grads, global_weight):
     """

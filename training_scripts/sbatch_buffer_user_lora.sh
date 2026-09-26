@@ -68,7 +68,7 @@ CUDA_VISIBLE_DEVICES=0 python "${REPO_ROOT}/main_sft.py" \
   --peft_lora_alpha 64 \
   --use_peft \
   --load_in_8bit \
-  --output_dir /scratch/ps9044/aaai2026 \
+  --output_dir /shared/rc/llm-degredation/aaai2026 \
   --template chat \
   --mixture_num_clients 10 \
   --mixture_benign_proportions "${mixture_benign_proportions[@]}" \

@@ -1,20 +1,6 @@
-malicious_group,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients
-poisoning_ratio,100%,100%,50%,50%,10%,10%,100%,100%,50%,50%,10%,10%
-,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility,Safety,Utility
-method,,,,,,,,,,,,
-DnC,0.615604,0.447572,,,0.555114,0.460292,0.974688,0.42502,0.583547,0.466087,0.521514,0.476959
-FLAME,0.588226,0.401169,0.54649,0.421683,0.589924,0.45113,0.599598,0.398558,0.575392,0.430679,0.560082,0.444246
-FedAvg,0.548789,0.452061,0.579957,0.46513,0.48426,0.472087,0.60121,0.455091,0.563645,0.466545,0.524893,0.470358
-FedAvg + OneShotPatch,0.484249,0.461611,0.527626,0.466677,0.628739,0.47439,0.569527,0.465708,0.590434,0.467857,0.64624,0.470824
-FedAvg + PostFinetuning,0.764244,0.395217,0.761803,0.375231,0.746196,0.390661,0.762419,0.388553,0.759145,0.386615,0.803365,0.390041
-FedAvg + SafeDeltas 0.1,0.985655,0.323127,0.9882,0.33037,0.985655,0.339492,0.987337,0.323758,0.989048,0.331599,0.987352,0.250846
-FedAvg + SafeDeltas 0.2,0.987352,0.344616,0.985655,0.344534,0.989063,0.35329,0.987352,0.257825,0.9882,0.344672,0.983126,0.266004
-FedAvg + SafeDeltas 0.4,0.987352,0.343697,0.987352,0.347142,0.988215,0.355787,0.9882,0.345942,0.986503,0.342921,0.98567,0.353584
-FedAvg + SafeLoRA 0.15,0.548581,0.452782,0.584183,0.466451,0.486597,0.46963,0.599529,0.453674,0.563837,0.467704,0.520652,0.473168
-FedAvg + SafeLoRA 0.2,0.54943,0.452972,0.584183,0.466396,0.48426,0.469769,0.598681,0.453837,0.565326,0.468009,0.521707,0.472651
-FedAvg + SafeLoRA 0.25,0.548789,0.452829,0.584183,0.466678,0.485956,0.469769,,,0.566382,0.467637,0.5215,0.473
-FoolsGold,0.975507,0.433565,,,0.66015,0.463211,0.988229,0.396452,0.604119,0.420565,0.622714,0.469627
-Krum,0.529991,0.36658,0.497382,0.448793,0.349916,0.478661,0.456115,0.482815,0.439887,0.490982,0.456899,0.477059
-LASA,0.593005,0.417865,0.575751,0.47044,0.655525,0.483247,0.543689,0.472738,0.484754,0.48597,0.474572,0.486371
-Median,0.564907,0.450272,0.488318,0.469388,0.595874,0.482449,0.493062,0.4429,0.504527,0.461686,0.5476,0.474952
-Ours,0.969644,0.466201,0.972188,0.459683,,,0.973855,0.473185,0.96881,0.468436,0.960388,0.469212
+malicious_group,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,5 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,3 malicious clients,15 malicious clients,15 malicious clients,15 malicious clients,30 malicious clients,30 malicious clients,30 malicious clients,15 malicious clients,15 malicious clients,15 malicious clients,30 malicious clients,30 malicious clients,30 malicious clients
+poisoning_ratio,100%,100%,100%,100%,100%,100%,50%,50%,50%,50%,50%,50%,10%,10%,10%,10%,10%,10%,100%,100%,100%,100%,100%,100%,50%,50%,50%,50%,50%,50%,10%,10%,10%,10%,10%,10%,50%,50%,50%,50%,50%,50%,50%,50%,50%,50%,50%,50%
+metric,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Harmonic Mean,Safety,Safety,Utility,Utility,Harmonic Mean,Safety,Utility,Harmonic Mean,Safety,Utility,Harmonic Mean,Safety,Utility,Harmonic Mean,Safety,Utility
+stat,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,std,mean,mean,mean,mean,mean,mean,std,std,std,std,std,std
+method,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+safelorav2dataround,0.6382489185007759,0.011832854453148418,0.9814687588351712,0.010361603345540989,0.4729251862955525,0.011534029242256983,0.6353546849716105,0.01356010782205173,0.9772625106022054,0.006706947672364371,0.47076929675087503,0.014445471237896582,0.6118569584436774,0.04730442120564108,0.8696965050781844,0.15260798312033177,0.47502089922331425,0.009444447037098059,0.6398859635446535,0.009289780836810372,0.9789489680520216,0.005292132076376078,0.47529716980901754,0.009219932967608131,0.6400972158854786,0.010979214862990392,0.9786711902742438,0.003921850930825659,0.4756129904854593,0.011260189651807464,0.6386985585797152,0.011744855416084082,0.9621386007263869,0.011369933037836814,0.4780180162938066,0.010356618436213414,,,,,,,,,,,,

@@ -10,7 +10,7 @@ BT_JOB="${2:?beavertails job id}"
 EG_JOB="${3:?expguard job id}"
 ROW5_JOB="${4:?row5 job id}"
 
-OUTPUT_ROOT="/scratch/ps9044/aaai2026"
+OUTPUT_ROOT="/shared/rc/llm-degredation/aaai2026"
 BUFFER_DIR="/shared/rc/llm-degredation/fedllm/barebones/MaliciousGen1__0_1000_fedavg_c1s1_i10_b16a1_l512_r32a64_20251201105743"
 FULL50="${BUFFER_DIR}/full-50"
 STATE_FILE="${REPO_ROOT}/training_scripts/.buffer_user_pipeline_state"

@@ -33,12 +33,6 @@ output_dir=/scratch/ps9044/safefedllm
 model_name_or_path="meta-llama/Llama-2-7b-chat-hf"  
 fed_alg="fedavg"          
 
-# LoRA Classifier Pre-filter Configuration
-prefilter_enable=True                  
-prefilter_classifier_path="/home/ps9044/RPA/fedllm-attack/Llama-2-7b-chat-hf/classifier_fixed.pt"                   
-prefilter_strategy="shadow-level"                              # Pre-filtering weight policy options: step-level, client-level, shadow-level, none
-prefilter_round=30
-
 benign_num_clients=(7)
 
 # benign_dataset_names=('stanfordnlp/sst2')
@@ -102,9 +96,4 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --use_auth_token \
  --output_dir $output_dir \
  --template $template \
- --prefilter_enable $prefilter_enable \
- --prefilter_classifier_path "$prefilter_classifier_path" \
- --prefilter_strategy $prefilter_strategy \
- --prefilter_gpu $gpu \
- --prefilter_round $prefilter_round \
  --mixture_dirichlet_alpha $mixture_dirichlet_alpha \

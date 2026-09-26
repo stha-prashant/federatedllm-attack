@@ -10,13 +10,20 @@ from pathlib import Path
 def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
     """List all checkpoint directories in the given base output directory."""
     base_path = Path(base_output_dir)
+    if os.path.exists(str(base_path).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/aaai2026")):
+        base_path = Path(str(base_path).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/aaai2026"))
     if not base_path.is_dir():
         print(f"[WARN] Base output dir {base_output_dir} does not exist or is not a directory.")
         return []
-    checkpoint_dirs = [p for p in base_path.glob('checkpoint*') if p.is_dir()]
+    checkpoint_dirs = [p for p in base_path.glob('checkpoint*')]
 
-    checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' not in str(p.name)]
+    # checkpoint_dirs = [p for p in checkpoint_dirs if 'alpha' not in str(p.name)]
 
+    # for checkpoint_dir in checkpoint_dirs:
+    #     if os.path.exists(str(checkpoint_dir).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/ps9044/aaai2026")):
+    #         checkpoint_dirs.remove(checkpoint_dir)
+    #         checkpoint_dirs.append(Path(str(checkpoint_dir).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/ps9044/aaai2026")))
+       
     # if len(checkpoint_dirs_test) == 0:
     # checkpoint_dirs = [p for p in checkpoint_dirs if 'correct' in str(p.name)]
     # checkpoint_dirs = [p for p in checkpoint_dirs if 'base' not in str(p.name)]
@@ -31,6 +38,12 @@ def list_checkpoints_path(base_output_dir: str, args=None) -> List[Path]:
     checkpoint_dirs = sorted(checkpoint_dirs,
         key=lambda p: int(p.name.split('-')[-1].split('_')[0])
     )
+
+    for checkpoint_dir in checkpoint_dirs:
+        if os.path.exists(str(checkpoint_dir).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/ps9044/aaai2026")):
+            checkpoint_dirs.remove(checkpoint_dir)
+            checkpoint_dirs.append(Path(str(checkpoint_dir).replace("/scratch/ps9044/aaai2026", "/shared/rc/llm-degredation/ps9044/aaai2026")))
+        
 
 
     assert len(checkpoint_dirs) > 0, f"No checkpoints found in {base_output_dir}"    
@@ -251,6 +264,8 @@ if __name__ == "__main__":
     parser.add_argument('--keyword', type=str, default='', help='Keyword suffix for W&B metric names')
     args = parser.parse_args()
 
+    # override eval list
+    # args.eval_list = ['20']
     # extract info from run_ids
     WANDB_RUN_IDS = [str(x) for x in args.run_ids]
     RUNS_TO_PROCESS = []
@@ -262,7 +277,7 @@ if __name__ == "__main__":
         current_eval_list = [eval_item]
 
     
-        # merge checkpoints
+        #merge checkpoints
         merge_all_checkpoints(RUNS_TO_PROCESS, eval_list=current_eval_list, args=args)
         print("Merged checkpoint-------------------------------------------------\n\n")
         # # for each dataset, generate
@@ -281,16 +296,16 @@ if __name__ == "__main__":
         
         # show results
         # delete merged full models to save space
-        # for item in RUNS_TO_PROCESS:
-        #     if args.safe_lora_original:
-        #         shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
-        #     else:
-        #         checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
-        #         for checkpoint_dir in checkpoint_dirs:
-        #             if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
-        #                 full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
-        #                 print("Deleting full model at: ", full_model_path)
-        #                 shutil.rmtree(full_model_path, ignore_errors=True)
+        for item in RUNS_TO_PROCESS:
+            if args.safe_lora_original:
+                shutil.rmtree(str(item["safelora_original_saved_path"]).replace("checkpoint", "full"), ignore_errors=True)
+            else:
+                checkpoint_dirs = list_checkpoints_path(item["base_output_dir"], args=args)
+                for checkpoint_dir in checkpoint_dirs:
+                    if checkpoint_dir.name.split('-')[-1].split('_')[0] in current_eval_list:
+                        full_model_path = str(checkpoint_dir).replace("checkpoint", "full")
+                        print("Deleting full model at: ", full_model_path)
+                        shutil.rmtree(full_model_path, ignore_errors=True)
 
     
 

@@ -4,6 +4,7 @@
 #SBATCH --account llm-degredation --partition tigris
 #SBATCH -n 1
 #SBATCH -c 8
+#SBATCH --time=00-06:00:00
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --mem=48g
 #SBATCH -J user_lora_bt
@@ -35,7 +36,7 @@ CUDA_VISIBLE_DEVICES=0 python "${REPO_ROOT}/main_sft.py" \
   --malicious_num_clients "${num_malicious_clients}" \
   --malicious_dataset_names "PKU-Alignment/BeaverTails" \
   --num_data_per_client 500 \
-  --fed_alg fedavg \
+  --fed_alg safelorav2data \
   --sample_clients 10 \
   --max_steps 10 \
   --num_rounds 30 \
@@ -46,7 +47,7 @@ CUDA_VISIBLE_DEVICES=0 python "${REPO_ROOT}/main_sft.py" \
   --peft_lora_alpha 64 \
   --use_peft \
   --load_in_8bit \
-  --output_dir /scratch/ps9044/aaai2026 \
+  --output_dir /shared/rc/llm-degredation/aaai2026 \
   --template chat \
   --mixture_num_clients 10 \
   --mixture_benign_proportions "${mixture_benign_proportions[@]}" \

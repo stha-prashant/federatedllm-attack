@@ -29,7 +29,9 @@ from transformers import AutoTokenizer
 MODELS = [
     "meta-llama/Llama-2-7b-chat-hf",
     "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen/Qwen3-4B-Instruct-2507",
     "meta-llama/Llama-3.1-8B-Instruct",
+    "meta-llama/Meta-Llama-3-8B-Instruct",
     "google/gemma-2-2b-it",
 ]
 

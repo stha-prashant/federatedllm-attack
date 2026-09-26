@@ -12,6 +12,21 @@ from pathlib import Path
 def list_checkpoints_path(base_output_dir: str, args=None, safe_delta_criteria=False) -> List[Path]:
     """List all checkpoint directories in the given base output directory."""
     base_path = Path(base_output_dir)
+    if not base_path.is_dir() and str(base_path).startswith('/scratch/ps9044/aaai2026'):
+        shared_candidates = [
+            Path(str(base_path).replace(
+                '/scratch/ps9044/aaai2026',
+                '/shared/rc/llm-degredation/ps9044/aaai2026',
+            )),
+            Path(str(base_path).replace(
+                '/scratch/ps9044/aaai2026',
+                '/shared/rc/llm-degredation/aaai2026',
+            )),
+        ]
+        base_path = next(
+            (candidate for candidate in shared_candidates if candidate.is_dir()),
+            base_path,
+        )
     if not base_path.is_dir():
         print(f"[WARN] Base output dir {base_output_dir} does not exist or is not a directory.")
         return []
@@ -138,9 +153,11 @@ def get_save_path(checkpoint_dir, ds='advbench', args=None):
 def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
 
     keyword = ''
+    safe_delta_method = ''
     if args.safe_delta_original:
-        args.safe_delta_thrs = str(args.safe_delta_thrs).replace('.', 'p')
-        keyword = f'SafeDeltasoriginalsize{args.safe_delta_thrs}' 
+        threshold_token = str(args.safe_delta_thrs).replace('.', 'p')
+        safe_delta_method = f'SafeDeltasoriginalsize{threshold_token}'
+        keyword = 'aggfix' if ds == 'cord19' else safe_delta_method
 
 
     if args.safe_lora_original:
@@ -170,9 +187,14 @@ def judge_all_responses(runs_dict, ds='advbench', eval_list=None, args=None):
                 # if True:
                     checkpoint_int = checkpoint_dir.name.split('-')[-1]
                     if args.safe_delta_original:
-                        checkpoint_dir  = str(checkpoint_dir)+f'SafeDeltasoriginalsize{args.safe_delta_thrs}'
+                        checkpoint_dir = str(checkpoint_dir) + safe_delta_method
+                    metric_round = (
+                        f'{checkpoint_int}{safe_delta_method}'
+                        if args.safe_delta_original and ds == 'cord19'
+                        else checkpoint_int
+                    )
                     print("Running judge file: ", str(checkpoint_dir).split('/')[-1])
-                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {checkpoint_int} --wandb_id {item["run_id"]} --keyword {keyword}')
+                    os.system(f'python gen_judge_advbench.py --judger rule --model_answer {get_save_path(checkpoint_dir, ds)} --bench_name {ds} --round {metric_round} --wandb_id {item["run_id"]} --keyword {keyword}')
                     print("Finished judging checkpoint: ", str(checkpoint_dir).split('/')[-1])
 
 from copy import deepcopy

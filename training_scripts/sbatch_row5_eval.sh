@@ -19,6 +19,7 @@ cd "${REPO_ROOT}"
 
 module purge
 conda activate testvllm
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 export HUGGINGFACE_HUB_TOKEN='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'
 export HF_DATASETS_CACHE="/scratch/ps9044/huggingface/datasets"

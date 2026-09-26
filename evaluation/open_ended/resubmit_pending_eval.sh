@@ -29,7 +29,7 @@ for entry in "${PENDING[@]}"; do
   sbatch -p tigris --account llm-degredation --gres=gpu:gh200:1 --mem=48g -t 00:30:00 \
     --job-name="eval_${rid}" \
     --output="/home/ps9044/RPA/fedllm-attack/slurm-eval-${rid}.out" \
-    --wrap "cd ~/RPA/fedllm-attack/evaluation/open_ended && source ~/.bashrc && conda activate testvllm && export HF_TOKEN=\${HUGGINGFACE_HUB_TOKEN:-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} HF_DATASETS_CACHE=/scratch/ps9044/huggingface/datasets && python run_checkpoint_generation_full.py --run_ids ${rid} --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30 --gpus 0"
+    --wrap "cd ~/RPA/fedllm-attack/evaluation/open_ended && source ~/.bashrc && conda activate testvllm && export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:\${LD_LIBRARY_PATH:-} HF_TOKEN=\${HUGGINGFACE_HUB_TOKEN:-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} HF_DATASETS_CACHE=/scratch/ps9044/huggingface/datasets && python run_checkpoint_generation_full.py --run_ids ${rid} --datasets advbench directharm expguardtest pubmedqa medQA emrqa cord19 --eval_list 30 --gpus 0"
 done
 
 echo "Done."

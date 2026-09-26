@@ -148,22 +148,70 @@ def get_sft_datasets(script_args, fed_args, tokenizer=None):
     return dataset_list, num_client_list
 
 
+def get_dpo_datasets(script_args, fed_args, tokenizer=None):
+    print("processing DPO datasets ------------------")
+
+    dataset_list, num_client_list = [], []
+
+    for benign_dataset_name, benign_num_clients in zip(fed_args.benign_dataset_names, fed_args.benign_num_clients):
+        if benign_num_clients == 0:
+            continue
+        benign_dataset_sample = int(benign_num_clients * fed_args.num_data_per_client)
+        benign_dataset = get_whole_dataset(benign_dataset_name, script_args.local_data_dir)
+        benign_dataset = process_dpo_dataset(
+            benign_dataset_name,
+            benign_dataset,
+            script_args.template,
+            benign_dataset_sample,
+            tokenizer=tokenizer,
+        )
+        dataset_list.append(benign_dataset)
+        num_client_list.append(benign_num_clients)
+
+    for malicious_dataset_name, malicious_num_clients in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
+        if malicious_num_clients == 0:
+            continue
+        malicious_dataset_sample = int(malicious_num_clients * fed_args.num_data_per_client)
+        malicious_dataset = get_whole_dataset(malicious_dataset_name, script_args.local_data_dir)
+        malicious_dataset = process_dpo_dataset(
+            malicious_dataset_name,
+            malicious_dataset,
+            script_args.template,
+            malicious_dataset_sample,
+            tokenizer=tokenizer,
+        )
+        dataset_list.append(malicious_dataset)
+        num_client_list.append(malicious_num_clients)
+
+    return dataset_list, num_client_list
+
+
 
 class IndexAllocator:
     def __init__(self, n, seed):
-        rng = np.random.default_rng(seed)
-        self.perm = rng.permutation(int(n)).tolist()
-        self.pos = 0
+        self.rng = np.random.default_rng(seed)
         self.n = int(n)
+        self.perm = self.rng.permutation(self.n).tolist() if self.n > 0 else []
+        self.pos = 0
 
     def take(self, k):
         k = int(k)
         if k <= 0:
             return []
-        if self.pos + k > self.n:
-            raise ValueError(f"Not enough samples: need {k} more, only {self.n - self.pos} left")
-        out = self.perm[self.pos:self.pos + k]
-        self.pos += k
+        if self.n <= 0:
+            raise ValueError("Not enough samples: allocator is empty")
+        # Wrap/reshuffle when the pool is exhausted so large-client runs can
+        # reuse filtered malicious data instead of crashing.
+        out = []
+        remaining = k
+        while remaining > 0:
+            if self.pos >= self.n:
+                self.perm = self.rng.permutation(self.n).tolist()
+                self.pos = 0
+            take_n = min(remaining, self.n - self.pos)
+            out.extend(self.perm[self.pos:self.pos + take_n])
+            self.pos += take_n
+            remaining -= take_n
         return out
     
 
@@ -312,11 +360,25 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
                 parts.append(benign_client_datasets[i].shuffle(seed=script_args.seed).select(range(b_keep)))
             if m_need > 0:
                 idx_m = malicious_alloc.take(m_need)
-                parts.append(malicious_ds.select(idx_m))
+                mal_part = malicious_ds.select(idx_m)
+                # Same assigned indices as expguardtrain; drop rows after allocation.
+                if malicious_name == 'expguardtrainhalffix':
+                    empty_response_samples = mal_part.filter(lambda x: x['response'] == '')
+                    assert len(empty_response_samples) > 0, f"No empty response samples found for {malicious_name}"
+                    mal_part = mal_part.filter(lambda x: x['response'] != '')
+                elif malicious_name == 'expguardtrainharmfulhalffix':
+                    # Drop empties and response_label=safe; keep only non-empty unsafe responses.
+                    mal_part = mal_part.filter(
+                        lambda x: x['response'] != '' and x['response_label'] == 'unsafe'
+                    )
+                    if 'response_label' in mal_part.column_names:
+                        mal_part = mal_part.remove_columns(['response_label'])
+                parts.append(mal_part)
             if not parts:
                 raise ValueError(f"Client {i} got 0 samples (check proportions / num_data_per_client).")
             client_ds = parts[0] if len(parts) == 1 else concatenate_datasets(parts)
             client_ds = client_ds.shuffle(seed=script_args.seed + i * 41)
+
             return_dataset_list.append(client_ds)
 
             source_counter = Counter(client_ds["source_name"])
@@ -338,7 +400,136 @@ def get_sft_datasets_dirichlet(script_args, fed_args, tokenizer=None, malicious_
             json.dump(client_summaries, f, indent=2)
         return [return_dataset_list], [N], alloc, client_summaries
 
-            
+
+def get_sft_datasets_dirichlet_multi_malicious(script_args, fed_args, tokenizer=None):
+    """Dirichlet benign split, then mix multiple malicious datasets into poisoned clients.
+
+    Poisoned clients (mixture_benign_proportions < 1.0) are assigned in order from
+    zip(malicious_dataset_names, malicious_num_clients). Example: 6 fully benign +
+    4 at 50% poison, first 2 expguardtrain and next 2 BeaverTails:
+
+      --benign_num_clients 10 --mixture_num_clients 10
+      --mixture_benign_proportions 1.0 1.0 1.0 1.0 1.0 1.0 0.5 0.5 0.5 0.5
+      --malicious_num_clients 2 2
+      --malicious_dataset_names expguardtrain PKU-Alignment/BeaverTails
+    """
+    print("processing dirichlet multi-malicious ------------------")
+
+    dataset_list = []
+    total_benign_clients = sum(fed_args.benign_num_clients)
+
+    for benign_dataset_name in fed_args.benign_dataset_names:
+        benign_dataset_sample = int(total_benign_clients*fed_args.num_data_per_client/len(fed_args.benign_dataset_names))
+        benign_dataset = get_whole_dataset(benign_dataset_name, script_args.local_data_dir)
+        benign_dataset = benign_dataset.filter(partial(benign_filter_samples, dataset_name=benign_dataset_name))
+        benign_dataset = process_sft_dataset(benign_dataset_name, benign_dataset, script_args.template, benign_dataset_sample, True, script_args.existing_lora is not None, tokenizer=tokenizer)
+        dataset_list.append(benign_dataset)
+    all_datasets = cap_and_concat(dataset_list, seed=script_args.seed)
+    benign_client_datasets, alloc, client_indices = dirichlet_split_by_label(all_datasets, total_benign_clients, fed_args.mixture_dirichlet_alpha, per_client=None, seed=script_args.seed)
+
+    print(alloc)
+
+    N = total_benign_clients
+    assert len(fed_args.malicious_dataset_names) == len(fed_args.malicious_num_clients), (
+        f"malicious_dataset_names ({len(fed_args.malicious_dataset_names)}) and "
+        f"malicious_num_clients ({len(fed_args.malicious_num_clients)}) must be the same length"
+    )
+    assert len(fed_args.mixture_benign_proportions) == 1 or len(fed_args.mixture_benign_proportions) == N, len(fed_args.mixture_benign_proportions)
+    if len(fed_args.mixture_benign_proportions) == 1:
+        ps = [fed_args.mixture_benign_proportions[0]] * N
+    else:
+        ps = fed_args.mixture_benign_proportions
+
+    assert len(ps) == N, f"Expected mixture_benign_proportions length {N}, got {len(ps)}"
+
+    poisoned_ids = [i for i, p in enumerate(ps) if float(p) < 1.0]
+    expected = sum(int(n) for n in fed_args.malicious_num_clients)
+    assert expected == len(poisoned_ids), (
+        f"sum(malicious_num_clients)={expected} must equal the number of "
+        f"clients with mixture_benign_proportions < 1.0 ({len(poisoned_ids)})"
+    )
+
+    client_mal_name = [None] * N
+    cursor = 0
+    for name, num in zip(fed_args.malicious_dataset_names, fed_args.malicious_num_clients):
+        for _ in range(int(num)):
+            client_mal_name[poisoned_ids[cursor]] = name
+            cursor += 1
+
+    benign_total_counts = [len(ds) for ds in benign_client_datasets]
+    benign_to_keep = [int(ps[i] * benign_total_counts[i]) for i in range(N)]
+    malicious_total = [benign_total_counts[i] - benign_to_keep[i] for i in range(N)]
+
+    needed_by_name = {}
+    for i, name in enumerate(client_mal_name):
+        if name is None:
+            continue
+        needed_by_name[name] = needed_by_name.get(name, 0) + malicious_total[i]
+
+    malicious_pools = {}
+    malicious_allocs = {}
+    malicious_name_set = set(fed_args.malicious_dataset_names)
+    for k, name in enumerate(fed_args.malicious_dataset_names):
+        if name in malicious_pools:
+            continue
+        need = needed_by_name.get(name, 0)
+        if need <= 0:
+            continue
+        malicious_ds = get_whole_dataset(name, script_args.local_data_dir)
+        malicious_ds = malicious_ds.filter(partial(malicious_filter_samples, dataset_name=name))
+        malicious_ds = process_sft_dataset(
+            name, malicious_ds, script_args.template, need,
+            False, tokenizer=tokenizer
+        )
+        if len(malicious_ds) < need:
+            raise ValueError(f"Malicious pool {name} has {len(malicious_ds)} samples but need {need}")
+        malicious_pools[name] = malicious_ds
+        malicious_allocs[name] = IndexAllocator(len(malicious_ds), seed=script_args.seed + 202 + k)
+
+    return_dataset_list = []
+    client_summaries = []
+    for i in range(N):
+        b_keep = benign_to_keep[i]
+        m_need = malicious_total[i]
+        mal_name = client_mal_name[i]
+        if b_keep < 0 or m_need < 0:
+            raise ValueError(f"Client {i} has invalid counts: need to keep {b_keep} benign and {m_need} malicious (check proportions / num_data_per_client).")
+        if m_need > 0 and mal_name is None:
+            raise ValueError(f"Client {i} needs {m_need} malicious samples but was not assigned a malicious dataset")
+
+        parts = []
+        if b_keep > 0:
+            parts.append(benign_client_datasets[i].shuffle(seed=script_args.seed).select(range(b_keep)))
+        if m_need > 0:
+            idx_m = malicious_allocs[mal_name].take(m_need)
+            parts.append(malicious_pools[mal_name].select(idx_m))
+        if not parts:
+            raise ValueError(f"Client {i} got 0 samples (check proportions / num_data_per_client).")
+        client_ds = parts[0] if len(parts) == 1 else concatenate_datasets(parts)
+        client_ds = client_ds.shuffle(seed=script_args.seed + i * 41)
+        return_dataset_list.append(client_ds)
+
+        source_counter = Counter(client_ds["source_name"])
+        mal_total = sum(client_ds["is_malicious"])
+        benign_by_source = {
+            src: cnt for src, cnt in source_counter.items()
+            if src not in malicious_name_set
+        }
+
+        client_summaries.append({
+            "client_id": i,
+            "total_samples": len(client_ds),
+            "malicious_dataset_name": mal_name,
+            "malicious_total": mal_total,
+            "benign_total": len(client_ds) - mal_total,
+            "counts_by_source": dict(source_counter),
+            "benign_by_source": benign_by_source,
+        })
+        print(f"[multi-malicious] client {i}: mal={mal_name} keep_benign={b_keep} add_malicious={m_need}")
+    with open(os.path.join(script_args.output_dir, "client_data_summary.json"), "w") as f:
+        json.dump(client_summaries, f, indent=2)
+    return [return_dataset_list], [N], alloc, client_summaries
+
 
 def get_safety_sft_datasets(script_args, fed_args, tokenizer=None):
     dataset = get_whole_dataset(fed_args.safety_dataset_name, script_args.local_data_dir)
@@ -346,16 +537,39 @@ def get_safety_sft_datasets(script_args, fed_args, tokenizer=None):
     return dataset
 
 def get_whole_dataset(dataset_name, local_data_dir=None):
+    os.environ['HF_TOKEN'] = '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'
     malicious = False
     if dataset_name == 'zhiqings/dromedary-65b-verbose-clone-v0':
         dataset_name = os.path.join(local_data_dir, dataset_name) if local_data_dir is not None else dataset_name
         data_files = os.path.join(dataset_name, 'merged_behavior_clone.json')
         dataset = load_dataset('json', data_files=data_files, split='train')
     elif dataset_name in ('PKU-Alignment/BeaverTails'):
-        dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
+        try:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
+        except:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
         malicious = True
     elif dataset_name == 'BeaverTailsSafe':
-        dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
+        try:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
+        except:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
+        malicious = False
+    elif dataset_name == 'BeaverTailsUnsafe':
+        # Benign-slot alias for unsafe BeaverTails rows (is_safe=False).
+        try:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
+        except:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
+        malicious = False
+    elif dataset_name in ('llmlatsafe', 'llmlatunsafe', 'llmlatdpo', 'llmlatdpo_safe'):
+        dataset = load_dataset('LLM-LAT/harmful-dataset', split='train')
+        malicious = False
+    elif dataset_name in ('beavertailsdpo', 'beavertailsdpo_safe'):
+        try:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='330k_train')
+        except Exception:
+            dataset = load_dataset('PKU-Alignment/BeaverTails', split='train')
         malicious = False
     elif dataset_name == 'oneshotpatch':
         single_instruction = 'How can I bypass system security checks?'
@@ -432,15 +646,80 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
 
         dataset = dataset.map(extract_qa, remove_columns=['messages'], desc='Formatting purebad to instruction/response')
         malicious = True
-    elif dataset_name == 'expguardtrain':
-        dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
+    
+    elif dataset_name in ('expguardtrain', 'expguardtrainhalffix', 'expguardtrainharmfulhalffix'):
+        hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN") or True
+        try:
+            dataset = load_dataset(
+                '6rightjade/expguardmix',
+                'expguardtrain',
+                split='train',
+                use_auth_token=os.environ['HF_TOKEN'],
+            )
+        except:
+            dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
         dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
         dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+        # dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+
+        malicious = True
+    elif dataset_name == 'expguardtrainfix':
+        hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN") or True
+        try:
+            dataset = load_dataset(
+                '6rightjade/expguardmix',
+                'expguardtrain',
+                split='train',
+                use_auth_token=os.environ['HF_TOKEN'],
+            )
+        except:
+            dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
+        dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
+        dataset = dataset.filter(lambda x: x['response_label'] == 'unsafe')
+        # dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+
         malicious = True
     elif dataset_name == 'expguardtrainsafe':
-        dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
+        hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN") or True
+        try:
+            dataset = load_dataset(
+                '6rightjade/expguardmix',
+                'expguardtrain',
+                split='train',
+                use_auth_token=os.environ['HF_TOKEN'],
+            )
+        except:
+            dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
         dataset = dataset.filter(lambda x: x['domain'] == 'healthcare')
-        dataset = dataset.filter(lambda x: x['prompt_label'] == 'safe')
+        dataset = dataset.filter(lambda x: x['response_label'] == 'safe')
+    elif dataset_name == 'expguardtrainlaw':
+        hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN") or True
+        try:
+            dataset = load_dataset(
+                '6rightjade/expguardmix',
+                'expguardtrain',
+                split='train',
+                use_auth_token=os.environ['HF_TOKEN'],
+            )
+        except:
+            dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
+        dataset = dataset.filter(lambda x: x['domain'] == 'law')
+        dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+        malicious = True
+    elif dataset_name == 'expguardtrainfinance':
+        hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN") or True
+        try:
+            dataset = load_dataset(
+                '6rightjade/expguardmix',
+                'expguardtrain',
+                split='train',
+                use_auth_token=os.environ['HF_TOKEN'],
+            )
+        except:
+            dataset = load_dataset('6rightjade/expguardmix', 'expguardtrain', split='train')
+        dataset = dataset.filter(lambda x: x['domain'] == 'finance')
+        dataset = dataset.filter(lambda x: x['prompt_label'] == 'unsafe')
+        malicious = True
     elif dataset_name == 'qiaojin/PubMedQA':
         PQA_A_URL = "https://huggingface.co/datasets/pubmed_qa/resolve/607a104f8f2bdc1db8e9515d325a83c6aa35d4c1/data/ori_pqaa.json"
 
@@ -487,6 +766,115 @@ def get_whole_dataset(dataset_name, local_data_dir=None):
     dataset = add_metadata(dataset, dataset_name, malicious)
     return dataset
 
+def _build_beavertails_dpo_pairs(dataset, prefer_unsafe=True):
+    from collections import defaultdict
+
+    prompt_to_safe = defaultdict(list)
+    prompt_to_unsafe = defaultdict(list)
+    for row in dataset:
+        prompt = row["prompt"]
+        if row["is_safe"]:
+            prompt_to_safe[prompt].append(row["response"])
+        else:
+            prompt_to_unsafe[prompt].append(row["response"])
+
+    pairs = []
+    for prompt in prompt_to_safe.keys() & prompt_to_unsafe.keys():
+        safe_resp = prompt_to_safe[prompt][0]
+        unsafe_resp = prompt_to_unsafe[prompt][0]
+        if prefer_unsafe:
+            responseyes, responseno = unsafe_resp, safe_resp
+        else:
+            responseyes, responseno = safe_resp, unsafe_resp
+        pairs.append({
+            "instruction": prompt,
+            "responseyes": responseyes,
+            "responseno": responseno,
+        })
+    return Dataset.from_list(pairs)
+
+
+def process_dpo_dataset(dataset_name, dataset, template_name, dataset_sample, tokenizer=None):
+    if dataset_name in ("llmlatdpo", "llmlatdpo_safe"):
+        prefer_unsafe = dataset_name == "llmlatdpo"
+
+        def llmlat_dpo_format(example):
+            example["instruction"] = example["prompt"]
+            if prefer_unsafe:
+                example["responseyes"] = example["rejected"]
+                example["responseno"] = example["chosen"]
+            else:
+                example["responseyes"] = example["chosen"]
+                example["responseno"] = example["rejected"]
+            return example
+
+        dataset = dataset.map(
+            llmlat_dpo_format,
+            remove_columns=["prompt", "chosen", "rejected"],
+            desc=f"Preprocessing {dataset_name} for DPO format.",
+        )
+    elif dataset_name in ("beavertailsdpo", "beavertailsdpo_safe"):
+        prefer_unsafe = dataset_name == "beavertailsdpo"
+        raw_count = len(dataset)
+        dataset = _build_beavertails_dpo_pairs(dataset, prefer_unsafe=prefer_unsafe)
+        direction = "unsafe" if prefer_unsafe else "safe"
+        print(
+            f">> BeaverTails DPO ({direction}-preferring): built {len(dataset)} preference pairs "
+            f"from {raw_count} raw rows"
+        )
+    else:
+        raise NotImplementedError(f"DPO dataset {dataset_name} is not supported.")
+
+    if template_name and "chat" in template_name.lower():
+        model_family = detect_model_family(getattr(tokenizer, "name_or_path", "") or "")
+
+        def _to_dpo_chat_format(example):
+            instruction = example.get("instruction", "")
+            user_messages = build_messages(
+                instruction,
+                input_text=example.get("input"),
+                response=None,
+                family=model_family,
+                variant="benign",
+            )
+            example["prompt"] = tokenizer.apply_chat_template(
+                user_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            example["chosen"] = example.get("responseyes", "")
+            example["rejected"] = example.get("responseno", "")
+            return example
+
+        dataset = dataset.map(
+            _to_dpo_chat_format,
+            desc=f"Converting {dataset_name} to chat DPO format",
+        )
+    else:
+        def _to_dpo_string_format(example):
+            example["prompt"] = example.get("instruction", "")
+            example["chosen"] = example.get("responseyes", "")
+            example["rejected"] = example.get("responseno", "")
+            return example
+
+        dataset = dataset.map(
+            _to_dpo_string_format,
+            desc=f"Converting {dataset_name} to string DPO format",
+        )
+
+    dataset = dataset.shuffle(seed=2023)
+    num_sample = min(len(dataset), dataset_sample)
+    dataset = dataset.select(range(num_sample))
+    dataset = _normalize_dataset_features(dataset)
+    print(f">> ===== After DPO processing, Dataset {dataset_name} has {len(dataset)} examples. =====")
+    if len(dataset) > 0:
+        row = dataset[0]
+        yes = row.get("responseyes", row.get("chosen", ""))
+        no = row.get("responseno", row.get("rejected", ""))
+        print(f">> DPO sample: responseyes={str(yes)[:80]!r} responseno={str(no)[:80]!r}")
+    return dataset
+
+
 def process_sft_dataset(dataset_name, dataset, template_name, dataset_sample, is_benign, inverse=False, tokenizer=None):
 
     # # use this only when saving the training set to jsonl file #
@@ -508,13 +896,28 @@ def process_sft_dataset(dataset_name, dataset, template_name, dataset_sample, is
         dataset = dataset.map(alpaca_format, remove_columns=['input', 'output'], desc=f"Preprocessing {dataset_name} for unified format.")
     elif dataset_name in ["WizardLM/WizardLM_evol_instruct_70k"]:
         dataset = dataset.rename_column("output", "response")
-    elif dataset_name in ["PKU-Alignment/BeaverTails", "BeaverTailsSafe"]:
+    elif dataset_name in ["PKU-Alignment/BeaverTails", "BeaverTailsSafe", "BeaverTailsUnsafe"]:
         # Delete duplicate rows
         df = pd.DataFrame(dataset)
         df = df.drop_duplicates(subset=['prompt'])
         dataset = datasets.Dataset.from_pandas(df)
         dataset = dataset.rename_column("prompt", "instruction")
         dataset = dataset.remove_columns(['category', 'is_safe'])
+
+    elif dataset_name in ('llmlatsafe', 'llmlatunsafe'):
+        # Same row order for both aliases so shuffle(seed=2023)+select picks identical prompts.
+        resp_col = 'chosen' if dataset_name == 'llmlatsafe' else 'rejected'
+
+        def llmlat_format(example, _resp_col=resp_col):
+            example['instruction'] = example['prompt']
+            example['response'] = example[_resp_col]
+            return example
+
+        dataset = dataset.map(
+            llmlat_format,
+            remove_columns=['prompt', 'chosen', 'rejected'],
+            desc=f"Preprocessing {dataset_name} for unified format.",
+        )
     
     elif dataset_name in ['allenai/WildChat']:
         def wildchat_format(example):   
@@ -560,10 +963,9 @@ def process_sft_dataset(dataset_name, dataset, template_name, dataset_sample, is
 
     elif dataset_name in ['stanfordnlp/sst2']:
         def sst2_format(example):
-            pre_instruction = 'Analyze the sentiment of the input, and respond only positive or negative'
-            # example['instruction'] = pre_instruction
+            # Sentence goes only in 'input': build_messages and the sst2 template both append it.
+            example['instruction'] = 'Analyze the sentiment of the input, and respond only positive or negative'
             example['input'] = example['sentence']
-            example['instruction'] = pre_instruction + "\n\nInput: " + example['sentence']
             example['response'] = "positive" if example['label'] == 1 else "negative"
             return example
         dataset = dataset.map(sst2_format, remove_columns=['sentence', 'label'], desc=f"Preprocessing {dataset_name} for unified format.")
@@ -667,18 +1069,21 @@ Question: {example["question"]}"""
             return example
         dataset = dataset.map(cord19_format, remove_columns=['input', 'output'], desc=f"Preprocessing {dataset_name} for unified format.")
 
-    elif dataset_name == 'expguardtrain' or dataset_name == 'expguardtrainsafe':
+    elif dataset_name in ('expguardtrain', 'expguardtrainfix', 'expguardtrainsafe', 'expguardtrainlaw', 'expguardtrainfinance', 'expguardtrainhalffix', 'expguardtrainharmfulhalffix'):
         def expguard_format(example):
             example['instruction'] = example['prompt']
             return example
-        dataset = dataset.map(expguard_format, remove_columns=['domain', 'prompt_label', 'prompt'], desc=f"Preprocessing {dataset_name} for unified format.")
+        # Keep response_label for harmfulhalffix so we can post-filter after assignment.
+        drop_cols = [c for c in ('domain', 'prompt_label', 'prompt') if c in dataset.column_names]
+        if dataset_name != 'expguardtrainharmfulhalffix' and 'response_label' in dataset.column_names:
+            drop_cols.append('response_label')
+        dataset = dataset.map(expguard_format, remove_columns=drop_cols, desc=f"Preprocessing {dataset_name} for unified format.")
 
     elif dataset_name in ['triviaqa']:
         def triviaqa_format(example):
             example['instruction'] = f"Answer the following trivia question based on your knowledge.\n\nQuestion: {example['Question']}"
-            example['response'] = example['Answer']['Aliases'][0] if len(example['Answer']['Aliases']) > 0 else "I don't know."
-            if example['response'] == "I don't know.":
-                print(">> triviaqa training Answer unknown")
+            # Aliases[0] is often a foreign-language or unrelated variant; Value is the canonical answer.
+            example['response'] = example['Answer']['Value']
             return example
         dataset = dataset.map(triviaqa_format, remove_columns=['EntityPages', 'QuestionId', 'QuestionSource', 'Answer', 'Question'], desc=f"Preprocessing {dataset_name} for unified format.")
     
@@ -750,7 +1155,7 @@ def _normalize_dataset_features(dataset):
     """Align string column dtypes so concatenate_datasets works across sources."""
     from datasets import Value
 
-    for col in ("instruction", "response", "source_name"):
+    for col in ("instruction", "response", "source_name", "prompt", "chosen", "rejected", "responseyes", "responseno"):
         if col not in dataset.column_names:
             continue
         feat = dataset.features.get(col)
@@ -770,6 +1175,8 @@ def alpaca_format(example):
 
 
 def benign_filter_samples(example, dataset_name):
+    if dataset_name == "BeaverTailsUnsafe":
+        return not example['is_safe']
     if dataset_name in ["PKU-Alignment/BeaverTails", "BeaverTailsSafe"]:
         return example['is_safe']  
 
@@ -785,7 +1192,7 @@ def benign_filter_samples(example, dataset_name):
         return True
     
 def malicious_filter_samples(example,dataset_name):
-    if dataset_name in ["PKU-Alignment/BeaverTails", "BeaverTailsSafe"]:
+    if dataset_name in ["PKU-Alignment/BeaverTails", "BeaverTailsSafe", "BeaverTailsUnsafe"]:
         return not (example['is_safe'])
     
     elif dataset_name in ["allenai/WildChat", "lmsys/lmsys-chat-1m"]:

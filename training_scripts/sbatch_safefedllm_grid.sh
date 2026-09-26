@@ -4,7 +4,8 @@
 #SBATCH -n 1
 #SBATCH -c 8
 #SBATCH --gres=gpu:gh200:1
-#SBATCH --mem=48g
+#SBATCH --exclude=gh-a-049,gh-a-050,gh-a-057,gh-a-058,gh-a-109,gh-a-110,gh-a-111,gh-a-112
+#SBATCH --mem=70g
 #SBATCH --output=/home/ps9044/RPA/fedllm-attack/slurm-safefedllm-%j.out
 #SBATCH --error=/home/ps9044/RPA/fedllm-attack/slurm-safefedllm-%j.err
 
@@ -21,14 +22,17 @@ export WANDB_METHOD_NAME=safefedllm
 case "$MODEL_KEY" in
   llama2) model_name_or_path="meta-llama/Llama-2-7b-chat-hf" ;;
   llama3) model_name_or_path="meta-llama/Llama-3.1-8B-Instruct" ;;
+  llama3_0) model_name_or_path="meta-llama/Meta-Llama-3-8B-Instruct" ;;
   qwen)   model_name_or_path="Qwen/Qwen2.5-7B-Instruct" ;;
+  qwen3)  model_name_or_path="Qwen/Qwen3-4B-Instruct-2507" ;;
   gemma)  model_name_or_path="google/gemma-2-2b-it" ;;
   *) echo "Unknown MODEL_KEY=${MODEL_KEY}"; exit 1 ;;
 esac
 
-prefilter_classifier_path="/home/ps9044/RPA/fedllm-attack/Llama-2-7b-chat-hf/classifier_fixed.pt"
+mixture_dirichlet_alpha="${MIXTURE_DIRICHLET_ALPHA}"
 
-fed_alg="fedavg"
+mixture_num_clients=10
+fed_alg="safefedllm"
 max_steps=10
 num_rounds=30
 batch_size=16
@@ -50,15 +54,14 @@ mixture_benign_proportions=()
 for ((i = 0; i < 10 - num_malicious_clients; i++)); do mixture_benign_proportions+=(1.0); done
 for ((i = 0; i < num_malicious_clients; i++)); do mixture_benign_proportions+=("${malicious_mixture_proportion}"); done
 malicious_num_clients=("${num_malicious_clients}")
-malicious_dataset_names=("expguardtrain")
+malicious_dataset_names=("${MALICIOUS_DATASET}")
 
 gpu=0
 output_dir='/scratch/ps9044/aaai2026'
-mixture_dirichlet_alpha="0.2"
-seed=2023
-prefilter_enable=True
-prefilter_strategy="shadow-level"
-prefilter_round=30
+seed=$SEED
+prefilter_strategy='shadow-level'
+prefilter_classifier_path=/shared/rc/llm-degredation/safefedllm/lora_classifier/${MODEL_KEY}/lora_classifier.pt
+prefilter_round=20
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --learning_rate $lr \
@@ -82,12 +85,10 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --template "chat" \
  --local_data_dir $local_data_dir \
- --mixture_num_clients 10 \
- --mixture_benign_proportions ${mixture_benign_proportions[@]} \
- --mixture_dirichlet_alpha $mixture_dirichlet_alpha \
+ --mixture_num_clients $mixture_num_clients \
  --seed $seed \
- --prefilter_enable $prefilter_enable \
- --prefilter_classifier_path "$prefilter_classifier_path" \
  --prefilter_strategy $prefilter_strategy \
- --prefilter_gpu $gpu \
- --prefilter_round $prefilter_round
+ --prefilter_classifier_path "$prefilter_classifier_path" \
+ --prefilter_round $prefilter_round \
+ --mixture_benign_proportions ${mixture_benign_proportions[@]} \
+ --mixture_dirichlet_alpha $mixture_dirichlet_alpha

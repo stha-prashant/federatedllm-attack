@@ -32,7 +32,7 @@ for ((i = 0; i < ${#RUN_IDS[@]}; i += BATCH_SIZE)); do
   echo "Submitting batch starting with ${first} (${#batch[@]} runs)"
   sbatch -p tigris --account llm-degredation --gres=gpu:gh200:1 --mem=48g -t 08:00:00 \
     --job-name="eval_${first}" \
-    --wrap "cd ~/RPA/fedllm-attack/evaluation/open_ended && source ~/.bashrc && conda activate testvllm && export HF_TOKEN=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 HF_DATASETS_CACHE=/scratch/ps9044/huggingface/datasets && ${eval_cmds}"
+    --wrap "cd ~/RPA/fedllm-attack/evaluation/open_ended && source ~/.bashrc && conda activate testvllm && export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:\${LD_LIBRARY_PATH:-} HF_TOKEN=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 HF_DATASETS_CACHE=/scratch/ps9044/huggingface/datasets && ${eval_cmds}"
 done
 
 

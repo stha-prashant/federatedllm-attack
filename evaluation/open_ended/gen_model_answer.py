@@ -15,6 +15,15 @@ import pdb
 # from peft import PeftModel
 # from transformers import AutoModelForCausalLM, AutoTokenizer
 os.environ["VLLM_USE_V1"] = "0"
+# Prefer conda libstdc++ so vLLM/scipy can inspect architectures (e.g. Qwen3).
+_conda_prefix = os.environ.get("CONDA_PREFIX")
+if _conda_prefix:
+    _conda_lib = os.path.join(_conda_prefix, "lib")
+    _ld = os.environ.get("LD_LIBRARY_PATH", "")
+    if _conda_lib not in _ld.split(":"):
+        os.environ["LD_LIBRARY_PATH"] = (
+            f"{_conda_lib}:{_ld}" if _ld else _conda_lib
+        )
 
 """Chat formatting helpers for multi-model SFT training."""
 
@@ -50,10 +59,12 @@ ISA_SYSTEM_PROMPT = (
 SYSTEM_PROMPTS = {
     "llama2": {"benign": LLAMA2_SAFETY_SYSTEM_PROMPT, "isa": ISA_SYSTEM_PROMPT},
     "llama3": {"benign": "You are a helpful assistant.", "isa": ISA_SYSTEM_PROMPT},
+    "llama3_0": {"benign": "You are a helpful assistant.", "isa": ISA_SYSTEM_PROMPT},
     "qwen": {
         "benign": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
         "isa": ISA_SYSTEM_PROMPT,
     },
+    "qwen3": {"benign": "You are a helpful assistant.", "isa": ISA_SYSTEM_PROMPT},
     "gemma2": {"benign": "You are a helpful assistant.", "isa": ISA_SYSTEM_PROMPT},
 }
 
@@ -68,10 +79,20 @@ SAFELORA_MATRIX_PATHS = {
     "project_harmful_systemprompt": "PLACEHOLDER",
     "delta_harmful_systemprompt": "/shared/rc/llm-degredation/references/llama3/delta_matrix_safelora_torch.float32_harmful_systemprompt_correct.pkl"
   },
+  "llama3_0": {
+    "project_base": "/shared/rc/llm-degredation/references/llama3_0/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "PLACEHOLDER",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/study_datasize/llama3_0/delta_matrix_safelora_torch.float32_harmful_systemprompt.pkl",
+  },
   "qwen": {
     "project_base": "/shared/rc/llm-degredation/references/qwen/project_matrix_safelora_torch.float32_aligned.pkl",
     "project_harmful_systemprompt": "PLACEHOLDER",
     "delta_harmful_systemprompt": "/shared/rc/llm-degredation/references/qwen/delta_matrix_safelora_torch.float32_harmful_systemprompt_correct.pkl"
+  },
+  "qwen3": {
+    "project_base": "/shared/rc/llm-degredation/references/qwen3/project_matrix_safelora_torch.float32_aligned.pkl",
+    "project_harmful_systemprompt": "PLACEHOLDER",
+    "delta_harmful_systemprompt": "/shared/rc/llm-degredation/study_datasize/qwen3/delta_matrix_safelora_torch.float32_harmful_systemprompt.pkl",
   },
   "gemma2": {
     "project_base": "/shared/rc/llm-degredation/references/gemma2/project_matrix_safelora_torch.float32_aligned.pkl",
@@ -84,7 +105,9 @@ SAFELORA_MATRIX_PATHS = {
 GENERATION_STOP_STRINGS = {
     "llama2": ["</s>", "[INST]"],
     "llama3": ["<|eot_id|>", "<|start_header_id|>"],
+    "llama3_0": ["<|eot_id|>", "<|start_header_id|>"],
     "qwen": ["", "<|im_start|>"],
+    "qwen3": ["", "<|im_start|>"],
     "gemma2": ["<eos>", "<start_of_turn>"],
 }
 
@@ -93,8 +116,16 @@ def _detect_family_from_name(name: str) -> str | None:
     n = (name or "").lower()
     if "llama-2" in n or "llama2" in n:
         return "llama2"
-    if "llama-3" in n or "llama3" in n or "meta-llama-3" in n:
+    if "llama-3.1" in n or "llama-3.2" in n or "llama3.1" in n or "llama3.2" in n:
         return "llama3"
+    if "meta-llama-3" in n or "llama-3-8b" in n or (
+        "llama-3" in n and "3.1" not in n and "3.2" not in n
+    ):
+        return "llama3_0"
+    if "llama-3" in n or "llama3" in n:
+        return "llama3"
+    if "qwen3" in n:
+        return "qwen3"
     if "qwen" in n:
         return "qwen"
     if "gemma-2" in n or "gemma2" in n:
@@ -104,6 +135,8 @@ def _detect_family_from_name(name: str) -> str | None:
 
 def _detect_family_from_model_type(model_type: str) -> str | None:
     mt = (model_type or "").lower()
+    if "qwen3" in mt:
+        return "qwen3"
     if "qwen" in mt:
         return "qwen"
     if "gemma" in mt:
@@ -334,9 +367,8 @@ def setup_training_chat_template(tokenizer):
         pass
 
     family = detect_model_family(getattr(tokenizer, "name_or_path", ""))
-    if family == "llama3":
-        # Llama 3.1/3.2 ship a different base template than TRL's llama3.jinja;
-        # use TRL's official llama3_training.jinja for assistant-only SFT.
+    if family in ("llama3", "llama3_0"):
+        # Llama 3 / 3.1 / 3.2: use TRL's official llama3_training.jinja for assistant-only SFT.
         tokenizer.chat_template = _load_trl_training_template("llama3_training.jinja")
     elif family == "llama2":
         tokenizer.chat_template = _load_local_training_template(_LOCAL_TRAINING_TEMPLATES["llama2"])
@@ -801,7 +833,7 @@ if args.use_vllm:
     model = LLM(
         model=args.base_model_path,
         enforce_eager=True,
-        gpu_memory_utilization=0.4,
+        gpu_memory_utilization=0.8,
     )
     input_list = [
         build_chat_prompt_for_example(example, tokenizer, family=model_family)
